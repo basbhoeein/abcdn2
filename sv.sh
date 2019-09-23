@@ -871,13 +871,13 @@ install_ssr(){
     "local_address":"127.0.0.1",
     "local_port":1080,
     "port_password":{
-                "1111":"pangbobi"
+                "${port}":"${password}"
         },
     "timeout":120,
-    "method":"aes-256-cfb",
-    "protocol":"auth_sha1_v4_compatible",
+    "method":"${method}",
+    "protocol":"${protocol}",
     "protocol_param":"3",
-    "obfs":"http_simple_compatible",
+    "obfs":"${obfs}",
     "obfs_param":"",
     "redirect":"*:*#127.0.0.1:80",
     "dns_ipv6":false,
