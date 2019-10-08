@@ -2,7 +2,7 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-sh_ver="5.0"
+sh_ver="6.0"
 
 #颜色信息
 Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m"
@@ -58,142 +58,54 @@ get_ip(){
 	[ -z ${IP} ] && IP=$( wget -qO- -t1 -T2 ipinfo.io/ip )
 	[ ! -z ${IP} ] && echo ${IP} || echo
 }
-#生成SSR链接
-set_ssrurl(){
-	#获取协议
-	protocol=$(sed -n -e '/\"protocol\"/=' /etc/shadowsocks.json)
-	protocol=$(sed -n ${protocol}p /etc/shadowsocks.json)
-	protocol=${protocol#*:\"}
-	protocol=${protocol%\"*}
-	#获取加密方式
-	method=$(sed -n -e '/\"method\"/=' /etc/shadowsocks.json)
-	method=$(sed -n ${method}p /etc/shadowsocks.json)
-	method=${method#*:\"}
-	method=${method%\"*}
-	#获取混淆
-	obfs=$(sed -n -e '/\"obfs\"/=' /etc/shadowsocks.json)
-	obfs=$(sed -n ${obfs}p /etc/shadowsocks.json)
-	obfs=${obfs#*:\"}
-	obfs=${obfs%\"*}
-	#信息处理
-	#随机信息
-	urlsafe_base64(){
-		date=$(echo -n "$1"|base64|sed ':a;N;s/\n/ /g;ta'|sed 's/ //g;s/=//g;s/+/-/g;s/\//_/g')
-		echo -e "${date}"
-	}
-	SSRprotocol=$(echo ${protocol} | sed 's/_compatible//g')
-	SSRobfs=$(echo ${obfs} | sed 's/_compatible//g')
-	SSRPWDbase64=$(urlsafe_base64 "${password}")
-	Remarksbase64=$(urlsafe_base64 "企鹅群:771890979")
-	Groupbase64=$(urlsafe_base64 "我们爱中国")
-	SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
-	SSRurl="ssr://${SSRbase64}"
-	service shadowsocks restart
-	clear
-	#输出链接
-	echo "SSR已重启！2秒后输出链接"
-	sleep 2s
-	echo -e "${Info}SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix} \n"
+get_char(){
+	SAVEDSTTY=`stty -g`
+	stty -echo
+	stty cbreak
+	dd if=/dev/tty bs=1 count=1 2> /dev/null
+	stty -raw
+	stty echo
+	stty $SAVEDSTTY
 }
 #防火墙配置
+firewall_restart(){
+	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
+		firewall-cmd --reload
+	else
+		if [[ ${release} == "centos" ]]; then
+			service iptables save
+			service ip6tables save
+		else
+			iptables-save > /etc/iptables.up.rules
+			ip6tables-save > /etc/ip6tables.up.rules
+		fi
+	fi
+	echo -e "${Info}防火墙设置完成,2秒后进行下一步"
+	sleep 2s
+}
 add_firewall(){
-	echo -e "${Info}开始设置防火墙..."
 	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
 		firewall-cmd --get-active-zones
 		firewall-cmd --permanent --zone=public --add-port=${port}/tcp > /dev/null 2>&1
 		firewall-cmd --permanent --zone=public --add-port=${port}/udp > /dev/null 2>&1
-		firewall-cmd --reload
 	else
 		iptables -I INPUT -p tcp --dport ${port} -j ACCEPT
 		iptables -I INPUT -p udp --dport ${port} -j ACCEPT
 		ip6tables -I INPUT -p tcp --dport ${port} -j ACCEPT
 		ip6tables -I INPUT -p udp --dport ${port} -j ACCEPT
-		if [[ ${release} == "centos" ]]; then
-			service iptables save
-			service ip6tables save
-		else
-			iptables-save > /etc/iptables.up.rules
-			ip6tables-save > /etc/ip6tables.up.rules
-		fi
 	fi
-	echo -e "${Info}防火墙设置完成,2秒后进行下一步"
-	sleep 2s
 }
 delete_firewall(){
-	echo -e "${Info}开始设置防火墙..."
 	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
 		firewall-cmd --get-active-zones
 		firewall-cmd --permanent --zone=public --remove-port=${port}/tcp > /dev/null 2>&1
 		firewall-cmd --permanent --zone=public --remove-port=${port}/udp > /dev/null 2>&1
-		firewall-cmd --reload
 	else
-		iptables -D INPUT -p tcp --dport ${port} -j ACCEPT
-		iptables -D INPUT -p udp --dport ${port} -j ACCEPT
-		ip6tables -D INPUT -p tcp --dport ${port} -j ACCEPT
-		ip6tables -D INPUT -p udp --dport ${port} -j ACCEPT
-		if [[ ${release} == "centos" ]]; then
-			service iptables save
-			service ip6tables save
-		else
-			iptables-save > /etc/iptables.up.rules
-			ip6tables-save > /etc/ip6tables.up.rules
-		fi
+		iptables -I INPUT -p tcp --dport ${port} -j DROP
+		iptables -I INPUT -p udp --dport ${port} -j DROP
+		ip6tables -I INPUT -p tcp --dport ${port} -j DROP
+		ip6tables -I INPUT -p udp --dport ${port} -j DROP
 	fi
-	echo -e "${Info}防火墙设置完成,2秒后进行下一步"
-	sleep 2s
-}
-add_firewall_all(){
-	echo -e "${Info}开始设置防火墙..."
-	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-		firewall-cmd --get-active-zones
-		firewall-cmd --permanent --zone=public --add-port=1-65535/tcp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --add-port=1-65535/udp > /dev/null 2>&1
-		firewall-cmd --reload
-	else
-		iptables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
-		iptables -I INPUT -p udp --dport 1:65535 -j ACCEPT
-		ip6tables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
-		ip6tables -I INPUT -p udp --dport 1:65535 -j ACCEPT
-		if [[ ${release} == "centos" ]]; then
-			service iptables save
-			service ip6tables save
-		else
-			iptables-save > /etc/iptables.up.rules
-			ip6tables-save > /etc/ip6tables.up.rules
-		fi
-	fi
-	echo -e "${Info}防火墙设置完成,2秒后进行下一步"
-	sleep 2s
-}
-delete_firewall_all(){
-	echo -e "${Info}开始设置防火墙..."
-	ssh_port=`grep ^Port /etc/ssh/sshd_config | awk '{print $2}'`
-	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-		firewall-cmd --get-active-zones
-		firewall-cmd --permanent --zone=public --remove-port=1-65535/tcp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --remove-port=1-65535/udp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/tcp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/udp > /dev/null 2>&1
-		firewall-cmd --reload
-	else
-		iptables -D INPUT -p tcp --dport 1:65535 -j ACCEPT
-		iptables -D INPUT -p udp --dport 1:65535 -j ACCEPT
-		ip6tables -D INPUT -p tcp --dport 1:65535 -j ACCEPT
-		ip6tables -D INPUT -p udp --dport 1:65535 -j ACCEPT
-		iptables -D INPUT -p tcp --dport ${ssh_port} -j ACCEPT
-		iptables -D INPUT -p udp --dport ${ssh_port} -j ACCEPT
-		ip6tables -D INPUT -p tcp --dport ${ssh_port} -j ACCEPT
-		ip6tables -D INPUT -p udp --dport ${ssh_port} -j ACCEPT
-		if [[ ${release} == "centos" ]]; then
-			service iptables save
-			service ip6tables save
-		else
-			iptables-save > /etc/iptables.up.rules
-			ip6tables-save > /etc/ip6tables.up.rules
-		fi
-	fi
-	echo -e "${Info}防火墙设置完成,2秒后进行下一步"
-	sleep 2s
 }
 #安装Docker
 install_docker(){
@@ -554,7 +466,6 @@ install_ssr(){
 	#=================================================================#
 
 	clear
-
 	libsodium_file="libsodium-1.0.17"
 	libsodium_url="https://github.com/jedisct1/libsodium/releases/download/1.0.17/libsodium-1.0.17.tar.gz"
 	shadowsocks_r_file="shadowsocksr-3.2.2"
@@ -562,59 +473,11 @@ install_ssr(){
 
 	#Current folder
 	cur_dir=`pwd`
-	# Stream Ciphers
-	ciphers=(
-	none
-	aes-256-cfb
-	aes-192-cfb
-	aes-128-cfb
-	aes-256-cfb8
-	aes-192-cfb8
-	aes-128-cfb8
-	aes-256-ctr
-	aes-192-ctr
-	aes-128-ctr
-	chacha20-ietf
-	chacha20
-	salsa20
-	xchacha20
-	xsalsa20
-	rc4-md5
-	)
+	
 	# Reference URL:
 	# https://github.com/shadowsocksr-rm/shadowsocks-rss/blob/master/ssr.md
 	# https://github.com/shadowsocksrr/shadowsocksr/commit/a3cf0254508992b7126ab1151df0c2f10bf82680
-	# Protocol
-	protocols=(
-	origin
-	verify_deflate
-	auth_sha1_v4
-	auth_sha1_v4_compatible
-	auth_aes128_md5
-	auth_aes128_sha1
-	auth_chain_a
-	auth_chain_b
-	auth_chain_c
-	auth_chain_d
-	auth_chain_e
-	auth_chain_f
-	)
-	# obfs
-	obfs=(
-	plain
-	http_simple
-	http_simple_compatible
-	http_post
-	http_post_compatible
-	tls1.2_ticket_auth
-	tls1.2_ticket_auth_compatible
-	tls1.2_ticket_fastauth
-	tls1.2_ticket_fastauth_compatible
-	)
-
-	# Make sure only root can run our script
-	[[ $EUID -ne 0 ]] && echo -e "[${red}Error${plain}] This script must be run as root!" && exit 1
-
+	
 	# Disable selinux
 	disable_selinux(){
 		if [ -s /etc/selinux/config ] && grep 'SELINUX=enforcing' /etc/selinux/config; then
@@ -694,67 +557,35 @@ install_ssr(){
 		fi
 	}
 
-	get_char(){
-		SAVEDSTTY=`stty -g`
-		stty -echo
-		stty cbreak
-		dd if=/dev/tty bs=1 count=1 2> /dev/null
-		stty -raw
-		stty echo
-		stty $SAVEDSTTY
-	}
-
-	# Pre-installation settings
-	pre_install(){
-		if check_sys_ssr packageManager yum || check_sys_ssr packageManager apt; then
-			# Not support CentOS 5
-			if centosversion 5; then
-				echo -e "$[{red}Error${plain}] Not supported CentOS 5, please change to CentOS 6+/Debian 7+/Ubuntu 12+ and try again."
-				exit 1
-			fi
-		else
-			echo -e "[${red}Error${plain}] Your OS is not supported. please change OS to CentOS/Debian/Ubuntu and try again."
-			exit 1
-		fi
-		# Set ShadowsocksR config password
-		echo "Please enter password for ShadowsocksR:"
-		read -p "(Default password: pangbobi):" password
-		[ -z "${password}" ] && password="pangbobi"
-		echo
-		echo "---------------------------"
-		echo "password = ${password}"
-		echo "---------------------------"
-		echo
-		# Set ShadowsocksR config port
+	#选择加密
+	set_method(){
+		# Stream Ciphers
+		ciphers=(
+			none
+			aes-256-cfb
+			aes-192-cfb
+			aes-128-cfb
+			aes-256-cfb8
+			aes-192-cfb8
+			aes-128-cfb8
+			aes-256-ctr
+			aes-192-ctr
+			aes-128-ctr
+			chacha20-ietf
+			chacha20
+			salsa20
+			xchacha20
+			xsalsa20
+			rc4-md5
+		)
 		while true
 		do
-		dport=$(shuf -i 9000-19999 -n 1)
-		echo -e "Please enter a port for ShadowsocksR [1-65535]"
-		read -p "(Default port: ${dport}):" port
-		[ -z "${port}" ] && port=${dport}
-		expr ${port} + 1 &>/dev/null
-		if [ $? -eq 0 ]; then
-			if [ ${port} -ge 1 ] && [ ${port} -le 65535 ] && [ ${port:0:1} != 0 ]; then
-				echo
-				echo "---------------------------"
-				echo "port = ${port}"
-				echo "---------------------------"
-				echo
-				break
-			fi
-		fi
-		echo -e "[${red}Error${plain}] Please enter a correct number [1-65535]"
-		done
-
-		# Set shadowsocksR config stream ciphers
-		while true
-		do
-		echo -e "Please select stream cipher for ShadowsocksR:"
+		echo -e "${Info}请选择ShadowsocksR加密方式:"
 		for ((i=1;i<=${#ciphers[@]};i++ )); do
 			hint="${ciphers[$i-1]}"
 			echo -e "${green}${i}${plain}) ${hint}"
 		done
-		read -p "Which cipher you'd select(Default: ${ciphers[1]}):" pick
+		read -p "Which cipher you'd select(默认: ${ciphers[1]}):" pick
 		[ -z "$pick" ] && pick=2
 		expr ${pick} + 1 &>/dev/null
 		if [ $? -ne 0 ]; then
@@ -773,16 +604,32 @@ install_ssr(){
 		echo
 		break
 		done
-
-		# Set shadowsocksR config protocol
+	}
+	#选择协议
+	set_protocol(){
+		# Protocol
+		protocols=(
+			origin
+			verify_deflate
+			auth_sha1_v4
+			auth_sha1_v4_compatible
+			auth_aes128_md5
+			auth_aes128_sha1
+			auth_chain_a
+			auth_chain_b
+			auth_chain_c
+			auth_chain_d
+			auth_chain_e
+			auth_chain_f
+		)
 		while true
 		do
-		echo -e "Please select protocol for ShadowsocksR:"
+		echo -e "${Info}请选择ShadowsocksR协议:"
 		for ((i=1;i<=${#protocols[@]};i++ )); do
 			hint="${protocols[$i-1]}"
 			echo -e "${green}${i}${plain}) ${hint}"
 		done
-		read -p "Which protocol you'd select(Default: ${protocols[3]}):" protocol
+		read -p "Which protocol you'd select(默认: ${protocols[3]}):" protocol
 		[ -z "$protocol" ] && protocol=4
 		expr ${protocol} + 1 &>/dev/null
 		if [ $? -ne 0 ]; then
@@ -801,16 +648,29 @@ install_ssr(){
 		echo
 		break
 		done
-
-		# Set shadowsocksR config obfs
+	}
+	#选择混淆
+	set_obfs(){
+		# obfs
+		obfs=(
+			plain
+			http_simple
+			http_simple_compatible
+			http_post
+			http_post_compatible
+			tls1.2_ticket_auth
+			tls1.2_ticket_auth_compatible
+			tls1.2_ticket_fastauth
+			tls1.2_ticket_fastauth_compatible
+		)
 		while true
 		do
-		echo -e "Please select obfs for ShadowsocksR:"
+		echo -e "${Info}请选择ShadowsocksR混淆方式:"
 		for ((i=1;i<=${#obfs[@]};i++ )); do
 			hint="${obfs[$i-1]}"
 			echo -e "${green}${i}${plain}) ${hint}"
 		done
-		read -p "Which obfs you'd select(Default: ${obfs[2]}):" r_obfs
+		read -p "Which obfs you'd select(默认: ${obfs[2]}):" r_obfs
 		[ -z "$r_obfs" ] && r_obfs=3
 		expr ${r_obfs} + 1 &>/dev/null
 		if [ $? -ne 0 ]; then
@@ -829,6 +689,58 @@ install_ssr(){
 		echo
 		break
 		done
+	}
+	
+	# Pre-installation settings
+	pre_install(){
+		if check_sys_ssr packageManager yum || check_sys_ssr packageManager apt; then
+			# Not support CentOS 5
+			if centosversion 5; then
+				echo -e "$[{red}Error${plain}] Not supported CentOS 5, please change to CentOS 6+/Debian 7+/Ubuntu 12+ and try again."
+				exit 1
+			fi
+		else
+			echo -e "[${red}Error${plain}] Your OS is not supported. please change OS to CentOS/Debian/Ubuntu and try again."
+			exit 1
+		fi
+		# Set ShadowsocksR config password
+		echo -e "${Info}请设置ShadowsocksR密码:"
+		read -p "(默认密码: pangbobi):" password
+		[ -z "${password}" ] && password="pangbobi"
+		echo
+		echo "---------------------------"
+		echo "password = ${password}"
+		echo "---------------------------"
+		echo
+		# Set ShadowsocksR config port
+		while true
+		do
+		dport=$(shuf -i 1000-9999 -n 1)
+		echo -e "${Info}请设置ShadowsocksR端口[1-65535]:"
+		read -p "(默认随机端口: ${dport}):" port
+		[ -z "${port}" ] && port=${dport}
+		expr ${port} + 1 &>/dev/null
+		if [ $? -eq 0 ]; then
+			if [ ${port} -ge 1 ] && [ ${port} -le 65535 ] && [ ${port:0:1} != 0 ]; then
+				echo
+				echo "---------------------------"
+				echo "port = ${port}"
+				echo "---------------------------"
+				echo
+				break
+			fi
+		fi
+		echo -e "[${red}Error${plain}] Please enter a correct number [1-65535]"
+		done
+
+		# Set shadowsocksR config stream ciphers
+		set_method
+
+		# Set shadowsocksR config protocol
+		set_protocol
+		
+		# Set shadowsocksR config obfs
+		set_obfs
 
 		echo
 		echo "Press any key to start...or Press Ctrl+C to cancel"
@@ -873,7 +785,7 @@ install_ssr(){
     "port_password":{
                 "${port}":"${password}"
         },
-    "timeout":120,
+    "timeout":300,
     "method":"${method}",
     "protocol":"${protocol}",
     "protocol_param":"3",
@@ -916,7 +828,8 @@ EOF
 				update-rc.d -f shadowsocks defaults
 			fi
 			/etc/init.d/shadowsocks start
-
+			
+			get_info
 			set_ssrurl
 			echo
 			echo -e "Congratulations, ShadowsocksR server install completed!"
@@ -934,7 +847,6 @@ EOF
  ${Green_font_prefix}1.${Font_color_suffix} 回到主页
  ${Green_font_prefix}2.${Font_color_suffix} 退出脚本
 ——————————————————————————————" && echo
-			echo
 			read -p " 请输入数字 [1-2](默认:2):" num
 			[ -z "${num}" ] && num=2
 			case "$num" in
@@ -999,37 +911,118 @@ EOF
 		download_files
 		config_shadowsocks
 		add_firewall
+		firewall_restart
 		install
 		install_cleanup
 	}
-	
-	#更改用户密码
+
+	#字符转换
+	urlsafe_base64(){
+		date=$(echo -n "$1"|base64|sed ':a;N;s/\n/ /g;ta'|sed 's/ //g;s/=//g;s/+/-/g;s/\//_/g')
+		echo -e "${date}"
+	}
+	#获取配置信息
+	get_info(){
+		#获取协议
+		protocol=$(jq -r '.protocol' /etc/shadowsocks.json)
+		#获取加密方式
+		method=$(jq -r '.method' /etc/shadowsocks.json)
+		#获取混淆
+		obfs=$(jq -r '.obfs' /etc/shadowsocks.json)
+		#预处理
+		SSRprotocol=$(echo ${protocol} | sed 's/_compatible//g')
+		SSRobfs=$(echo ${obfs} | sed 's/_compatible//g')
+		Remarksbase64=$(urlsafe_base64 "企鹅号:3450633979有问题随时戳我")
+		Groupbase64=$(urlsafe_base64 "我们爱中国")
+	}
+	#读取端口密码
+	get_pp(){
+		cat > ppj<<-EOF
+$(jq '.port_password' /etc/shadowsocks.json)
+EOF
+		pp=$(jq -r "to_entries|map(\"\(.key):\(.value|tostring)\")|.[]" ppj)
+		cat > ppj<<-EOF
+${pp}
+EOF
+	}
+	#生成SSR链接
+	set_ssrurl(){
+		SSRPWDbase64=$(urlsafe_base64 "${password}")
+		SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
+		SSRurl="ssr://${SSRbase64}"
+		service shadowsocks restart
+		clear
+		#输出链接
+		echo -e "${Info}SSR已重启！2秒后输出链接"
+		sleep 2s
+		echo -e "${Info}端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
+		echo -e "${Info}SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+	}
+	#查看所有链接
+	view_ssrurl(){
+		clear
+		get_pp
+		cat ppj | while read line; do
+			port=`echo $line|awk -F ':' '{print $1}'`
+			password=`echo $line|awk -F ':' '{print $2}'`
+			echo -e "端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
+			SSRPWDbase64=$(urlsafe_base64 "${password}")
+			SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
+			SSRurl="ssr://${SSRbase64}"
+			echo -e "SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+		done
+		echo -e "服务器IP    ：${Red_font_prefix}$(get_ip)${Font_color_suffix}"
+		echo -e "加密方式    ：${Red_font_prefix}${method}${Font_color_suffix}"
+		echo -e "协议        ：${Red_font_prefix}${protocol}${Font_color_suffix}"
+		echo -e "混淆        ：${Red_font_prefix}${obfs}${Font_color_suffix}"
+		echo -e "当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+		if [[ "${testmpo}" == "1" ]]; then
+			service shadowsocks restart
+			echo -e "${Info}SSR已重启！"
+		fi
+		echo -e "${Info}按任意键回到SSR用户管理页..."
+		char=`get_char`
+		manage_ssr
+	}
+
+	#更改密码
 	change_pw(){
 		#查看文件内容
 		clear
-		cat /etc/shadowsocks.json
-		echo -e "${Info}以上是配置文件的内容"
-		read -p "请输入要改密的端口号：" port
+		get_pp
+		jq '.port_password' /etc/shadowsocks.json
+		echo -e "${Info}以上是配置文件的内容\n"
+		#判断端口是否已有,清空port内存
+		unset port
+		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+		do
+			read -p "请输入要改密的端口号：" port
+		done
+		password1=$(cat ppj | grep "${port}:" | awk -F ':' '{print $2}')
 		password=$(openssl rand -base64 6)
-		sed -i "s/\"$port\":\".*\"/\"$port\":\"$password\"/g" /etc/shadowsocks.json
-		echo "已修改成功！"
-		#获取端口,密码(输入过程中已获取)
+		et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
+		until [[ "${password1}" == "${password}" ]]
+		do
+			sed -i "${et}s/${password1}/${password}/g" /etc/shadowsocks.json
+			get_pp
+			password1=$(cat ppj | grep "${port}:" | awk -F ':' '{print $2}')
+		done
 		#调用生成链接的函数
 		set_ssrurl
-		echo -e "————胖波比————
- —————————————————————————————————
+		echo -e "	————胖波比————
+ —————————————————————————————
  ${Green_font_prefix}1.${Font_color_suffix} 继续更改用户密码
- ${Green_font_prefix}2.${Font_color_suffix} 返回首页
+ ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
  ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————————"
-		read -p "请务必记录下SSR链接之后再进行下一步操作[1-3](默认:3)：" num
+ —————————————————————————————" && echo
+		read -p " 请输入数字 [1-3](默认:3)：" num
 		[ -z "${num}" ] && num=3
 		case "$num" in
 			1)
 			change_pw
 			;;
 			2)
-			start_menu_main
+			manage_ssr
 			;;
 			3)
 			exit 1
@@ -1038,73 +1031,157 @@ EOF
 			clear
 			echo -e "${Error}:请输入正确数字 [1-3]:"
 			sleep 2s
-			start_menu_main
+			manage_ssr
 			;;
 		esac
 	}
-
 	#添加用户
 	add_user(){
-		cat /etc/shadowsocks.json
-		read -p "请输入端口[1-65535],不可重复:" port
-		add_firewall
-		password=$(openssl rand -base64 6)
-		sed -i "7i\\\t\t\"${port}\":\"${password}\"," /etc/shadowsocks.json
-		set_ssrurl
-		echo -e "	————胖波比————
- ———————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续添加用户
- ${Green_font_prefix}2.${Font_color_suffix} 返回首页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- ———————————————————————————"
-		read -p "请务必记录下SSR链接之后再进行下一步操作[1-3](默认:3)：" num
-		[ -z "${num}" ] && num=3
-		case "$num" in
-			1)
-			add_user
-			;;
-			2)
-			start_menu_main
-			;;
-			3)
-			exit 1
-			;;
-			*)
+		#逐个添加
+		add_user_single(){
 			clear
-			echo -e "${Error}:请输入正确数字 [1-3]:"
-			sleep 2s
-			start_menu_main
-			;;
-		esac
-	}
-	
+			jq '.port_password' /etc/shadowsocks.json
+			echo -e "${Info}以上是配置文件的内容"
+			echo -e "${Info}当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			unset port
+			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
+			do
+				read -p "请输入要添加的端口号[1000-65535]：" port
+			done
+			add_firewall
+			firewall_restart
+			password=$(openssl rand -base64 6)
+			sed -i "7i\\\t\t\"${port}\":\"${password}\"," /etc/shadowsocks.json
+			set_ssrurl
+			echo -e "    ————胖波比————
+ ——————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 继续添加用户
+ ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
+ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
+ ——————————————————————" && echo
+			read -p " 请输入数字 [1-3](默认:3)：" num
+			[ -z "${num}" ] && num=3
+			case "$num" in
+				1)
+				add_user_single
+				;;
+				2)
+				manage_ssr
+				;;
+				3)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-3]:"
+				sleep 2s
+				manage_ssr
+				;;
+			esac
+		}
+		#批量添加
+		add_user_multi(){
+			clear
+			echo -e "\n${Info}当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			read -p "请输入要添加的用户个数(默认:1)：" num
+			[ -z "${num}" ] && num=1
+			unset port
+			for(( i = 0; i < ${num}; i++ ))
+			do
+				until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' ]]
+				do
+					port=$(shuf -i 1000-9999 -n 1)
+				done
+				add_firewall
+				password=$(openssl rand -base64 6)
+				sed -i "7i\\\t\t\"${port}\":\"${password}\"," /etc/shadowsocks.json
+				SSRPWDbase64=$(urlsafe_base64 "${password}")
+				SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
+				SSRurl="ssr://${SSRbase64}"
+				echo -e "${Info}端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
+				echo -e "${Info}SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+			done
+			firewall_restart
+			service shadowsocks restart
+			echo -e "${Info}SSR已重启！"
+			echo -e "${Info}当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			echo -e "${Info}按任意键返回SSR用户管理页..."
+			char=`get_char`
+			manage_ssr
+		}
+		#添加用户菜单
+		add_user_menu(){
+			clear
+			echo && echo -e "    ————胖波比————
+ —————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 逐个添加
+ ${Green_font_prefix}2.${Font_color_suffix} 批量添加
+ ${Green_font_prefix}3.${Font_color_suffix} 返回SSR用户管理页
+ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
+ —————————————————————" && echo
+			read -p "请输入数字[1-4](默认:4)：" num
+			[ -z "${num}" ] && num=4
+			case "$num" in
+				1)
+				add_user_single
+				;;
+				2)
+				add_user_multi
+				;;
+				3)
+				manage_ssr
+				;;
+				4)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-4]:"
+				sleep 2s
+				add_user_menu
+				;;
+			esac
+		}
+		add_user_menu
+	}	
 	#删除用户
 	delete_user(){
-		cat /etc/shadowsocks.json
-		read -p "请输入端口[1-65535],已有端口:" port
-		delete_firewall
-		port=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
-		sed -i "${port} d" /etc/shadowsocks.json
-		echo -e "${Info}用户已删除,1秒后重启SSR"
-		sleep 1s
-		service shadowsocks restart
-		echo -e "${Info}SSR已重启"
-		sleep 1s
 		clear
-		echo -e "————胖波比————
- —————————————————————————————————
+		jq '.port_password' /etc/shadowsocks.json
+		echo -e "${Info}以上是配置文件的内容\n"
+		unset port
+		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+		do
+			read -p "请输入要删除的端口:" port
+		done
+		et=$(awk "/${port}/{getline;print}" /etc/shadowsocks.json)
+		if [[ `expr index "${et}" '}'` -ne '0' ]]; then
+			et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
+			((et--))
+			sed -i "${et}s/,//g" /etc/shadowsocks.json
+		fi
+		sed -i "/${port}/d" /etc/shadowsocks.json
+		echo -e "${Info}用户已删除..."
+		delete_firewall
+		firewall_restart
+		service shadowsocks restart
+		echo -e "${Info}SSR已重启！"
+		sleep 2s
+		clear
+		echo && echo -e "	————胖波比————
+ —————————————————————————————
  ${Green_font_prefix}1.${Font_color_suffix} 继续删除用户
- ${Green_font_prefix}2.${Font_color_suffix} 返回首页
+ ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
  ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————————"
-		read -p "请输入数字 [1-3](默认:3)：" num
+ —————————————————————————————"
+		read -p " 请输入数字 [1-3](默认:3)：" num
 		[ -z "${num}" ] && num=3
 		case "$num" in
 			1)
 			delete_user
 			;;
 			2)
-			start_menu_main
+			manage_ssr
 			;;
 			3)
 			exit 1
@@ -1113,31 +1190,104 @@ EOF
 			clear
 			echo -e "${Error}:请输入正确数字 [1-3]:"
 			sleep 2s
-			start_menu_main
+			manage_ssr
 			;;
 		esac
 	}
+	#更改端口
+	change_port(){
+		clear
+		jq '.port_password' /etc/shadowsocks.json
+		echo -e "${Info}以上是配置文件的内容\n"
+		unset port
+		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+		do
+			read -p "请输入要修改的端口号：" port
+		done
+		delete_firewall
+		port1=${port}
+		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
+		do
+			read -p "请输入修改后的端口[1000-65535]:" port
+		done
+		add_firewall
+		firewall_restart
+		password=$(openssl rand -base64 6)
+		sed -i "s/${port1}/${port}/g"  /etc/shadowsocks.json
+		set_ssrurl
+		echo -e "	————胖波比————
+ ———————————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 继续更改端口
+ ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
+ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
+ ———————————————————————————"
+		read -p " 请输入数字 [1-3](默认:3)：" num
+		[ -z "${num}" ] && num=3
+		case "$num" in
+			1)
+			change_port
+			;;
+			2)
+			manage_ssr
+			;;
+			3)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}:请输入正确数字 [1-3]:"
+			sleep 2s
+			manage_ssr
+			;;
+		esac
+	}
+	#更改加密
+	change_method(){
+		method1=$(jq -r '.method' /etc/shadowsocks.json)
+		set_method
+		sed -i "s/${method1}/${method}/g"  /etc/shadowsocks.json
+		testmpo=1
+		view_ssrurl
+	}
+	#更改协议
+	change_protocol(){
+		protocol1=$(jq -r '.protocol' /etc/shadowsocks.json)
+		set_protocol
+		sed -i "s/${protocol1}/${protocol}/g"  /etc/shadowsocks.json
+		SSRprotocol=$(echo ${protocol} | sed 's/_compatible//g')
+		testmpo=1
+		view_ssrurl
+	}
+	#更改混淆
+	change_obfs(){
+		obfs1=$(jq -r '.obfs' /etc/shadowsocks.json)
+		set_obfs
+		sed -i "s/${obfs1}/${obfs}/g"  /etc/shadowsocks.json
+		SSRobfs=$(echo ${obfs} | sed 's/_compatible//g')
+		testmpo=1
+		view_ssrurl
+	}
 	
-	#管理SSR
+	#管理SSR配置
 	manage_ssr(){
 		clear
-		echo && echo -e " SSR一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
+		get_info
+		echo && echo -e "   SSR用户管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	  -- 胖波比 --
+手动修改配置文件：vi /etc/shadowsocks.json
 		
-————————————SSR管理—————————————
- ${Green_font_prefix}1.${Font_color_suffix} 更改用户密码
- ${Green_font_prefix}2.${Font_color_suffix} 查看用户配置
- ${Green_font_prefix}3.${Font_color_suffix} 添加用户
- ${Green_font_prefix}4.${Font_color_suffix} 删除用户
- ${Green_font_prefix}5.${Font_color_suffix} 启动SSR
- ${Green_font_prefix}6.${Font_color_suffix} 关闭SSR
- ${Green_font_prefix}7.${Font_color_suffix} 重启SSR
- ${Green_font_prefix}8.${Font_color_suffix} 查看SSR状态
+—————————SSR用户管理——————————
+ ${Green_font_prefix}1.${Font_color_suffix} 更改密码
+ ${Green_font_prefix}2.${Font_color_suffix} 添加用户
+ ${Green_font_prefix}3.${Font_color_suffix} 删除用户
+ ${Green_font_prefix}4.${Font_color_suffix} 更改端口
+ ${Green_font_prefix}5.${Font_color_suffix} 更改加密
+ ${Green_font_prefix}6.${Font_color_suffix} 更改协议
+ ${Green_font_prefix}7.${Font_color_suffix} 更改混淆
+ ${Green_font_prefix}8.${Font_color_suffix} 查看用户链接
  ${Green_font_prefix}9.${Font_color_suffix} 回到主页
  ${Green_font_prefix}10.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-
-		echo
+——————————————————————————————" && echo
 		read -p " 请输入数字 [1-10](默认:10):" num
 		[ -z "${num}" ] && num=10
 		case "$num" in
@@ -1145,26 +1295,26 @@ EOF
 			change_pw
 			;;
 			2)
-			clear
-			vi /etc/shadowsocks.json
-			;;
-			3)
 			add_user
 			;;
-			4)
+			3)
 			delete_user
 			;;
+			4)
+			change_port
+			;;
 			5)
-			service shadowsocks start
+			change_method
 			;;
 			6)
-			service shadowsocks stop
+			change_protocol
 			;;
 			7)
-			service shadowsocks restart
+			change_obfs
 			;;
 			8)
-			service shadowsocks status
+			testmpo=2
+			view_ssrurl
 			;;
 			9)
 			start_menu_main
@@ -1184,19 +1334,21 @@ EOF
 	# Initialization step
 	start_menu_ssr(){
 		echo && echo -e " SSR一键安装脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
+    -- 胖波比 --
 		
-————————————SSR安装————————————
+——————————SSR安装——————————
  ${Green_font_prefix}1.${Font_color_suffix} 安装SSR
- ${Green_font_prefix}2.${Font_color_suffix} 管理SSR
+ ${Green_font_prefix}2.${Font_color_suffix} 管理SSR用户
  ${Green_font_prefix}3.${Font_color_suffix} 卸载SSR
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-
-		echo
-		read -p " 请输入数字 [1-5](默认:5):" num
-		[ -z "${num}" ] && num=5
+ ${Green_font_prefix}4.${Font_color_suffix} 重启SSR
+ ${Green_font_prefix}5.${Font_color_suffix} 关闭SSR
+ ${Green_font_prefix}6.${Font_color_suffix} 启动SSR
+ ${Green_font_prefix}7.${Font_color_suffix} 查看SSR状态
+ ${Green_font_prefix}8.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}9.${Font_color_suffix} 退出脚本
+———————————————————————————" && echo
+		read -p " 请输入数字 [1-9](默认:9):" num
+		[ -z "${num}" ] && num=9
 		case "$num" in
 			1)
 			install_shadowsocksr
@@ -1208,14 +1360,26 @@ EOF
 			uninstall_shadowsocksr
 			;;
 			4)
-			start_menu_main
+			service shadowsocks restart
 			;;
 			5)
+			service shadowsocks stop
+			;;
+			6)
+			service shadowsocks start
+			;;
+			7)
+			service shadowsocks status
+			;;
+			8)
+			start_menu_main
+			;;
+			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-5]"
+			echo -e "${Error}:请输入正确数字 [1-9]"
 			sleep 2s
 			start_menu_ssr
 			;;
@@ -1239,11 +1403,6 @@ install_bbr(){
 	#=================================================
 
 	github="raw.githubusercontent.com/chiakge/Linux-NetSpeed/master"
-
-	Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m"
-	Info="${Green_font_prefix}[信息]${Font_color_suffix}"
-	Error="${Red_font_prefix}[错误]${Font_color_suffix}"
-	Tip="${Green_font_prefix}[注意]${Font_color_suffix}"
 
 	#安装BBR内核
 	installbbr(){
@@ -1537,26 +1696,6 @@ install_bbr(){
 			reboot
 		fi
 	}
-	#更新脚本
-	Update_Shell(){
-		echo -e "当前版本为 [ ${sh_ver} ]，开始检测最新版本..."
-		sh_new_ver=$(wget --no-check-certificate -qO- "http://${github}/tcp.sh"|grep 'sh_ver="'|awk -F "=" '{print $NF}'|sed 's/\"//g'|head -1)
-		[[ -z ${sh_new_ver} ]] && echo -e "${Error} 检测最新版本失败 !" && start_menu
-		if [[ ${sh_new_ver} != ${sh_ver} ]]; then
-			echo -e "发现新版本[ ${sh_new_ver} ]，是否更新？[Y/n]"
-			read -p "(默认: y):" yn
-			[[ -z "${yn}" ]] && yn="y"
-			if [[ ${yn} == [Yy] ]]; then
-				wget -N --no-check-certificate http://${github}/tcp.sh && chmod +x tcp.sh
-				echo -e "脚本已更新为最新版本[ ${sh_new_ver} ] !"
-			else
-				echo && echo "	已取消..." && echo
-			fi
-		else
-			echo -e "当前已是最新版本[ ${sh_new_ver} ] !"
-			sleep 2s
-		fi
-	}
 
 	#开始菜单
 	start_menu_bbr(){
@@ -1564,7 +1703,6 @@ install_bbr(){
 	echo && echo -e " TCP加速 一键安装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
   -- 就是爱生活 | 94ish.me --
   
- ${Green_font_prefix}0.${Font_color_suffix} 升级脚本
 ————————————内核管理————————————
  ${Green_font_prefix}1.${Font_color_suffix} 安装 BBR/BBR魔改版内核
  ${Green_font_prefix}2.${Font_color_suffix} 安装 BBRplus版内核 
@@ -1590,12 +1728,9 @@ install_bbr(){
 			
 		fi
 	echo
-	read -p " 请输入数字 [0-12](默认:12):" num
+	read -p " 请输入数字 [1-12](默认:12):" num
 	[ -z "${num}" ] && num=12
 	case "$num" in
-		0)
-		Update_Shell
-		;;
 		1)
 		check_sys_bbr
 		;;
@@ -1634,7 +1769,7 @@ install_bbr(){
 		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [0-12]"
+		echo -e "${Error}:请输入正确数字 [1-12]"
 		sleep 2s
 		start_menu_bbr
 		;;
@@ -1909,8 +2044,9 @@ exit						#退出
 */1 * * * * docker exec -t sspanel php xcat checkjob
 */1 * * * * docker exec -t sspanel php xcat syncnode"
 		echo -e "${Info}请务必先记录以上信息！"
-		echo -e "${Info}60秒后进行下一步！"
-		sleep 60s
+		echo -e "\n${Info}按任意键返回主页..."
+		char=`get_char`
+		start_menu_main
 	}
 	#稳定版
 	sspanel_install_a(){
@@ -1919,7 +2055,6 @@ exit						#退出
 		wget https://raw.githubusercontent.com/Baiyuetribe/ss-panel-v3-mod_Uim/dev/Docker/master/docker-compose.yml
 		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
 		docker-compose up -d
-		add_firewall_all
 		sspanel_message
 	}
 	#开发版
@@ -1930,7 +2065,6 @@ exit						#退出
 		wget https://raw.githubusercontent.com/Baiyuetribe/ss-panel-v3-mod_Uim/dev/Docker/docker-compose.yml
 		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
 		docker-compose up -d
-		add_firewall_all
 		sspanel_message
 	}
 	#管理面板
@@ -2068,6 +2202,7 @@ install_caddy(){
 			read -p "请输入监听端口[1-65535],已默认添加80端口" port
 			[ -z "${port}" ] && port=80
 			add_firewall
+			firewall_restart
 			echo "http://$domain {
 root /usr/local/caddy/listenport
 proxy / 127.0.0.1:$port
@@ -2086,6 +2221,7 @@ gzip
 			read -p "请输入监听端口[1-65535],已默认添加443端口" port
 			[ -z "${port}" ] && port=443
 			add_firewall
+			firewall_restart
 			read -p " 请输入你的邮箱:" yemail
 			echo "https://$domain {
 root /usr/local/caddy/listenport
@@ -2098,6 +2234,7 @@ gzip
 			add_firewall
 			port=443
 			add_firewall
+			firewall_restart
 			service caddy restart
 			echo -e "${Info}Caddy重启成功，请手动配置SSR或V2Ray监听端口"
 			sleep 2s
@@ -2349,8 +2486,9 @@ EOF
 		add_nginx(){
 			cat /etc/nginx/conf.d/default.conf
 			read -p "请输入端口[1-65535],不可重复,(默认:8080):" port
-			add_firewall
 			[ -z "${port}" ] && port=8080
+			add_firewall
+			firewall_restart
 			sed -i "2i\\\tlisten ${port};" /etc/nginx/conf.d/default.conf
 			set_nginx_success
 		}
@@ -2424,6 +2562,7 @@ EOF
 		add_firewall
 		port=443
 		add_firewall
+		firewall_restart
 		echo -e "${Info}已默认添加80,443端口
 如需手动配置，请修改：/etc/nginx/conf.d/default.conf"
 		set_nginx_success
@@ -2507,14 +2646,17 @@ set_ssh(){
 	#开放端口
 	port=$SSH_PORT
 	add_firewall
+	firewall_restart
 	#重启SSH防火墙
 	if [[ "${release}" == "centos" ]]; then
 		service sshd restart
 	elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
 		service ssh restart
 	fi
-	echo -e "${Info}SSH防火墙已重启！2秒后回到主页"
-	sleep 2s
+	echo -e "${Info}SSH防火墙已重启！"
+	echo -e "${Info}已将SSH端口修改为：${Red_font_prefix}${port}${Font_color_suffix}"
+	echo -e "\n${Info}按任意键返回主页..."
+	char=`get_char`
 	start_menu_main
  }
  
@@ -3566,7 +3708,10 @@ reinstall_sys(){
 
 	# 安装系统
 	InstallOS(){
-	read -p " 请设置密码:" pw
+	echo -e "${Info}重装系统需要时间,请耐心等待..."
+	echo -e "${Info}重装完成后,请用root身份从22端口连接服务器！\n"
+	read -p " 请设置密码(默认:pangbobi):" pw
+	[ -z "${pw}" ] && pw="pangbobi"
 	if [[ "${model}" == "自动" ]]; then
 		model="a"
 	else 
@@ -3622,7 +3767,7 @@ reinstall_sys(){
 	clear
 	os="c"
 	echo && echo -e " 一键网络重装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 就是爱生活 | 94ish.me --
+  -- 就是爱生活 | 94ish.me --
 	  
 ————————————选择版本————————————
  ${Green_font_prefix}1.${Font_color_suffix} 安装 CentOS6.8系统
@@ -3844,7 +3989,65 @@ reinstall_sys(){
 
 #设置防火墙
 set_firewall(){
+	#!/usr/bin/env bash
+	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
+	export PATH
+	
+	add_firewall_single(){
+		clear
+		until [[ "${port}" -ge "1" && "${port}" -le "65535" ]]
+		do
+			read -p " 请输入端口号[1-65535]：" port
+		done
+		add_firewall
+		firewall_restart
+	}
+	delete_firewall_single(){
+		clear
+		until [[ "${port}" -ge "1" && "${port}" -le "65535" ]]
+		do
+			read -p " 请输入端口号[1-65535]：" port
+		done
+		delete_firewall
+		firewall_restart
+	}
+	add_firewall_all(){
+		echo -e "${Info}开始设置防火墙..."
+		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
+			firewall-cmd --get-active-zones
+			firewall-cmd --permanent --zone=public --add-port=1-65535/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=1-65535/udp > /dev/null 2>&1
+		else
+			iptables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
+			iptables -I INPUT -p udp --dport 1:65535 -j ACCEPT
+			ip6tables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
+			ip6tables -I INPUT -p udp --dport 1:65535 -j ACCEPT
+		fi
+		firewall_restart
+	}
+	delete_firewall_all(){
+		echo -e "${Info}开始设置防火墙..."
+		ssh_port=`grep ^Port /etc/ssh/sshd_config | awk '{print $2}'`
+		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
+			firewall-cmd --get-active-zones
+			firewall-cmd --permanent --zone=public --remove-port=1-65535/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --remove-port=1-65535/udp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=${ssh_port}/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=${ssh_port}/udp > /dev/null 2>&1
+		else
+			iptables -I INPUT -p tcp --dport 1:65535 -j DROP
+			iptables -I INPUT -p udp --dport 1:65535 -j DROP
+			ip6tables -I INPUT -p tcp --dport 1:65535 -j DROP
+			ip6tables -I INPUT -p udp --dport 1:65535 -j DROP
+			iptables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
+			iptables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
+			ip6tables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
+			ip6tables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
+		fi
+		firewall_restart
+	}
 	clear
+	unset port
 	echo && echo -e " Firewall一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
 	-- 胖波比 --
 		
@@ -3860,14 +4063,10 @@ set_firewall(){
 	[ -z "${num}" ] && num=6
 	case "$num" in
 		1)
-		clear
-		read -p " 请输入端口号[1-65535]:" port
-		add_firewall
+		add_firewall_single
 		;;
 		2)
-		clear
-		read -p " 请输入端口号[1-65535]:" port
-		delete_firewall
+		delete_firewall_single
 		;;
 		3)
 		add_firewall_all
@@ -4426,8 +4625,9 @@ install_btpanel(){
 	((outTime=($endTime-$startTime)/60))
 	echo -e "Time consumed:\033[32m $outTime \033[0mMinute!"
 	echo -e "${Info}请务必及时记录登录信息!"
-	echo -e "${Info}60秒后进行下一步..."
-	sleep 60s
+	echo -e "\n${Info}按任意键返回主页..."
+	char=`get_char`
+	start_menu_main
 }
 
 #安装Kodexplorer
@@ -4436,12 +4636,37 @@ install_kodexplorer(){
 	read -p "请输入访问端口[1-65535](默认:999):" port
 	[ -z "${port}" ] && port=999
 	add_firewall
+	firewall_restart
     docker run -d -p ${port}:80 --name kodexplorer -v /opt/kodcloud:/code baiyuetribe/kodexplorer
 	echo -e "${Info}已安装完成!"
 	echo -e "${Info}请访问http://$(get_ip):${port}"
     echo -e "${Info}默认宿主机目录/opt/kodcloud"
-	echo -e "${Info}10秒后进行下一步..."
-	sleep 10s
+	echo -e "\n${Info}按任意键返回主页..."
+	char=`get_char`
+	start_menu_main
+}
+
+#更新脚本
+update_sv(){
+	github="raw.githubusercontent.com/AmuyangA/internet/master/supervpn"
+	echo -e "${Info}当前版本为 [ ${sh_ver} ]，开始检测最新版本..."
+	sh_new_ver=$(wget --no-check-certificate -qO- "http://${github}/sv.sh"|grep 'sh_ver="'|awk -F "=" '{print $NF}'|sed 's/\"//g'|head -1)
+	[[ -z ${sh_new_ver} ]] && echo -e "${Error} 检测最新版本失败 !" && start_menu_main
+	if [[ ${sh_new_ver} != ${sh_ver} ]]; then
+		echo -e "${Info}发现新版本[ ${sh_new_ver} ]，是否更新？[Y/n]"
+		read -p "(默认: y):" yn
+		[[ -z "${yn}" ]] && yn="y"
+		if [[ ${yn} == [Yy] ]]; then
+			wget -N --no-check-certificate http://${github}/sv.sh && chmod +x sv.sh
+			echo -e "${Info}脚本已更新为最新版本[ ${sh_new_ver} ] !"
+			echo -e "${Info}旧版本已被覆盖,下次启动将运行最新版！"
+		else
+			echo && echo "${Info}已取消..." && echo
+		fi
+	else
+		echo -e "${Info}当前已是最新版本[ ${sh_new_ver} ] !"
+		sleep 2s
+	fi
 }
 
 #开始菜单
@@ -4453,16 +4678,17 @@ start_menu_main(){
 	echo "#  Github: https://github.com/AmuyangA/internet/  #"
 	echo "###################################################"
 	echo -e "
-	超级VPN 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
+  超级VPN 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	  -- 胖波比 --
 	执行脚本：./sv.sh
+  终止正在进行的操作：Ctrl+C
 	  
 —————————————VPN搭建——————————————
  ${Green_font_prefix}1.${Font_color_suffix} 安装V2Ray
  ${Green_font_prefix}2.${Font_color_suffix} SSR安装管理
  ${Green_font_prefix}3.${Font_color_suffix} BBR/Lotserver安装管理
  ${Green_font_prefix}4.${Font_color_suffix} 一键安装SS-Panel/Kodexplorer
- ——————————设置伪装(二选一)———————
+———————————设置伪装(二选一)———————
  ${Green_font_prefix}5.${Font_color_suffix} Caddy安装管理
  ${Green_font_prefix}6.${Font_color_suffix} Nginx安装管理(推荐)
 —————————————系统设置—————————————
@@ -4476,12 +4702,11 @@ start_menu_main(){
 —————————————脚本设置—————————————
  ${Green_font_prefix}14.${Font_color_suffix} 设置脚本自启
  ${Green_font_prefix}15.${Font_color_suffix} 关闭脚本自启
- ${Green_font_prefix}16.${Font_color_suffix} 退出脚本
+ ${Green_font_prefix}16.${Font_color_suffix} 更新脚本
+ ${Green_font_prefix}17.${Font_color_suffix} 退出脚本
 ——————————————————————————————————" && echo
-
-	echo
-	read -p " 请输入数字 [1-16](默认:16):" num
-	[ -z "${num}" ] && num=16
+	read -p " 请输入数字 [1-17](默认:17):" num
+	[ -z "${num}" ] && num=17
 	case "$num" in
 		1)
 		install_v2ray
@@ -4526,28 +4751,34 @@ start_menu_main(){
 		echo "./sv.sh" >> .bash_profile
 		;;
 		15)
-		sed -i '$d' .bash_profile
+		sed -i "/sv.sh/d" .bash_profile
 		;;
 		16)
+		update_sv
+		;;
+		17)
 		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [1-16]:"
+		echo -e "${Error}:请输入正确数字 [1-17]:"
 		sleep 2s
 		start_menu_main
 		;;
 	esac
+	start_menu_main
 }
 
 check_sys
 [[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error} 本脚本不支持当前系统 ${release} !" && exit 1
 #安装依赖
 test ! -e /root/testde || start_menu_main
+echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续..."
+char=`get_char`
 if [[ "${release}" == "centos" ]]; then
-	yum install -y python python-devel python-setuptools openssl openssl-devel git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion
+	yum install -y python python-devel python-setuptools openssl openssl-devel git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion jq
 elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
-	apt-get -y install python python-dev python-setuptools openssl libssl-dev git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim
+	apt-get -y install python python-dev python-setuptools openssl libssl-dev git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq
 	iptables -A INPUT -p icmp --icmp-type any -j ACCEPT
 	iptables -A INPUT -s localhost -d localhost -j ACCEPT
 	iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
@@ -4558,5 +4789,4 @@ elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
 	chmod +x /etc/network/if-pre-up.d/iptables
 fi
 touch /root/testde
-
 start_menu_main
