@@ -2,7 +2,7 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-sh_ver="6.0"
+sh_ver="6.4.5"
 
 #颜色信息
 Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m"
@@ -15,10 +15,9 @@ yellow='\033[0;33m'
 plain='\033[0m'
 
 #check root
-[ $(id -u) != "0" ] && { echo "${Error}错误: 您必须以root用户运行此脚本"; exit 1; }
+[ $(id -u) != "0" ] && { echo "${Error}: 您必须以root用户运行此脚本"; exit 1; }
 
-clear
-#############系统检测组件#############
+######系统检测组件######
 #检查系统
 check_sys(){
 	if [[ -f /etc/redhat-release ]]; then
@@ -95,6 +94,23 @@ add_firewall(){
 		ip6tables -I INPUT -p udp --dport ${port} -j ACCEPT
 	fi
 }
+add_firewall_base(){
+	ssh_port=$(cat /etc/ssh/sshd_config | grep "Port " | tail -1 | awk -F ' ' '{print $2}')
+	if [[ "${release}" == "centos" ]]; then
+		firewall-cmd --get-active-zones
+		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/tcp > /dev/null 2>&1
+		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/udp > /dev/null 2>&1
+	else
+		iptables -A INPUT -p icmp --icmp-type any -j ACCEPT
+		iptables -A INPUT -s localhost -d localhost -j ACCEPT
+		iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+		iptables -P INPUT DROP
+		iptables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
+		iptables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
+		ip6tables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
+		ip6tables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
+	fi
+}
 delete_firewall(){
 	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
 		firewall-cmd --get-active-zones
@@ -111,100 +127,306 @@ delete_firewall(){
 install_docker(){
 	#安装docker
 	if [ -x "$(command -v docker)" ]; then
-		echo "${Info}您的系统已安装docker"
+		echo -e "${Info}您的系统已安装docker"
 	else
-		echo "${Info}开始安装docker..."
+		echo -e "${Info}开始安装docker..."
 		docker version > /dev/null || curl -fsSL get.docker.com | bash
 		service docker restart
 		systemctl enable docker 
 	fi
 	#安装Docker环境
 	if [ -x "$(command -v docker-compose)" ]; then
-		echo "${Info}系统已存在Docker环境"
+		echo -e "${Info}系统已存在Docker环境"
 	else
-		echo "${Info}正在安装Docker环境..."
+		echo -e "${Info}正在安装Docker环境..."
 		curl -L "https://github.com/docker/compose/releases/download/1.24.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 		chmod +x /usr/local/bin/docker-compose
 	fi
 }
 	
-###########超级VPN一键设置#############
 #安装V2ray
-install_v2ray(){
-	#!/bin/bash
-	# Author: Jrohy
-	# github: https://github.com/Jrohy/multi-v2ray
+manage_v2ray(){
+	install_v2ray(){
+		#!/bin/bash
+		# github: https://github.com/Jrohy/multi-v2ray
 
-	#定时任务北京执行时间(0~23)
-	BEIJING_UPDATE_TIME=3
+		#定时任务北京执行时间(0~23)
+		BEIJING_UPDATE_TIME=3
 
-	#记录最开始运行脚本的路径
-	BEGIN_PATH=$(pwd)
+		#记录最开始运行脚本的路径
+		BEGIN_PATH=$(pwd)
 
-	#安装方式, 0为全新安装, 1为保留v2ray配置更新
-	INSTALL_WAY=0
+		#安装方式, 0为全新安装, 1为保留v2ray配置更新
+		INSTALL_WAY=0
 
-	#定义操作变量, 0为否, 1为是
-	HELP=0
-	REMOVE=0
-	CHINESE=0
-	BASE_SOURCE_PATH="https://raw.githubusercontent.com/Jrohy/multi-v2ray/master"
-	CLEAN_IPTABLES_SHELL="$BASE_SOURCE_PATH/v2ray_util/global_setting/clean_iptables.sh"
-	BASH_COMPLETION_SHELL="$BASE_SOURCE_PATH/v2ray.bash"
-	UTIL_CFG="$BASE_SOURCE_PATH/v2ray_util/util_core/util.cfg"
-	UTIL_PATH="/etc/v2ray_util/util.cfg"
+		#定义操作变量, 0为否, 1为是
+		HELP=0
+		REMOVE=0
+		CHINESE=0
+		BASE_SOURCE_PATH="https://raw.githubusercontent.com/Jrohy/multi-v2ray/master"
+		CLEAN_IPTABLES_SHELL="$BASE_SOURCE_PATH/v2ray_util/global_setting/clean_iptables.sh"
+		BASH_COMPLETION_SHELL="$BASE_SOURCE_PATH/v2ray.bash"
+		UTIL_CFG="$BASE_SOURCE_PATH/v2ray_util/util_core/util.cfg"
+		UTIL_PATH="/etc/v2ray_util/util.cfg"
 
-	#Centos 临时取消别名
-	[[ -f /etc/redhat-release && -z $(echo $SHELL|grep zsh) ]] && unalias -a
-	[[ -z $(echo $SHELL|grep zsh) ]] && ENV_FILE=".bashrc" || ENV_FILE=".zshrc"
+		#Centos 临时取消别名
+		[[ -f /etc/redhat-release && -z $(echo $SHELL|grep zsh) ]] && unalias -a
+		[[ -z $(echo $SHELL|grep zsh) ]] && ENV_FILE=".bashrc" || ENV_FILE=".zshrc"
 
-	#######color code########
-	RED="31m"
-	GREEN="32m"
-	YELLOW="33m"
-	BLUE="36m"
-	FUCHSIA="35m"
+		#######color code########
+		RED="31m"
+		GREEN="32m"
+		YELLOW="33m"
+		BLUE="36m"
+		FUCHSIA="35m"
 
-	colorEcho(){
-		COLOR=$1
-		echo -e "\033[${COLOR}${@:2}\033[0m"
+		colorEcho(){
+			COLOR=$1
+			echo -e "\033[${COLOR}${@:2}\033[0m"
+		}
+
+		#######get params#########
+		while [[ $# > 0 ]];do
+			key="$1"
+			case $key in
+				--remove)
+				REMOVE=1
+				;;
+				-h|--help)
+				HELP=1
+				;;
+				-k|--keep)
+				INSTALL_WAY=1
+				colorEcho ${BLUE} "keep v2ray profile to update\n"
+				;;
+				--zh)
+				CHINESE=1
+				colorEcho ${BLUE} "安装中文版..\n"
+				;;
+				*)
+						# unknown option
+				;;
+			esac
+			shift # past argument or value
+		done
+		#############################
+
+		help(){
+			echo "bash multi-v2ray.sh [-h|--help] [-k|--keep] [--remove]"
+			echo "  -h, --help           Show help"
+			echo "  -k, --keep           keep the v2ray config.json to update"
+			echo "      --remove         remove v2ray && multi-v2ray"
+			echo "                       no params to new install"
+			return 0
+		}
+
+		closeSELinux() {
+			#禁用SELinux
+			if [ -s /etc/selinux/config ] && grep 'SELINUX=enforcing' /etc/selinux/config; then
+				sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+				setenforce 0
+			fi
+		}
+
+		checkSys() {
+			#检查是否为Root
+			[ $(id -u) != "0" ] && { colorEcho ${RED} "Error: You must be root to run this script"; exit 1; }
+
+			#检查系统信息
+			if [[ -e /etc/redhat-release ]];then
+				if [[ $(cat /etc/redhat-release | grep Fedora) ]];then
+					OS='Fedora'
+					PACKAGE_MANAGER='dnf'
+				else
+					OS='CentOS'
+					PACKAGE_MANAGER='yum'
+				fi
+			elif [[ $(cat /etc/issue | grep Debian) ]];then
+				OS='Debian'
+				PACKAGE_MANAGER='apt-get'
+			elif [[ $(cat /etc/issue | grep Ubuntu) ]];then
+				OS='Ubuntu'
+				PACKAGE_MANAGER='apt-get'
+			elif [[ $(cat /etc/issue | grep Raspbian) ]];then
+				OS='Raspbian'
+				PACKAGE_MANAGER='apt-get'
+			else
+				colorEcho ${RED} "Not support OS, Please reinstall OS and retry!"
+				exit 1
+			fi
+		}
+
+		#安装依赖
+		installDependent(){
+			if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
+				${PACKAGE_MANAGER} install ntpdate socat crontabs lsof which -y
+			else
+				${PACKAGE_MANAGER} update
+				${PACKAGE_MANAGER} install ntpdate socat cron lsof -y
+			fi
+
+			#install python3 & pip3
+			bash <(curl -sL https://git.io/fhqMz)
+		}
+
+		#设置定时升级任务
+		planUpdate(){
+			if [[ $CHINESE == 1 ]];then
+				#计算北京时间早上3点时VPS的实际时间
+				ORIGIN_TIME_ZONE=$(date -R|awk '{printf"%d",$6}')
+				LOCAL_TIME_ZONE=${ORIGIN_TIME_ZONE%00}
+				BEIJING_ZONE=8
+				DIFF_ZONE=$[$BEIJING_ZONE-$LOCAL_TIME_ZONE]
+				LOCAL_TIME=$[$BEIJING_UPDATE_TIME-$DIFF_ZONE]
+				if [ $LOCAL_TIME -lt 0 ];then
+					LOCAL_TIME=$[24+$LOCAL_TIME]
+				elif [ $LOCAL_TIME -ge 24 ];then
+					LOCAL_TIME=$[$LOCAL_TIME-24]
+				fi
+				colorEcho ${BLUE} "beijing time ${BEIJING_UPDATE_TIME}, VPS time: ${LOCAL_TIME}\n"
+			else
+				LOCAL_TIME=3
+			fi
+			OLD_CRONTAB=$(crontab -l)
+			echo "SHELL=/bin/bash" >> crontab.txt
+			echo "${OLD_CRONTAB}" >> crontab.txt
+			echo "0 ${LOCAL_TIME} * * * bash <(curl -L -s https://install.direct/go.sh) | tee -a /root/v2rayUpdate.log && service v2ray restart" >> crontab.txt
+			crontab crontab.txt
+			sleep 1
+			if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
+				service crond restart
+			else
+				service cron restart
+			fi
+			rm -f crontab.txt
+			colorEcho ${GREEN} "success open schedule update task: beijing time ${BEIJING_UPDATE_TIME}\n"
+		}
+
+		updateProject() {
+			local DOMAIN=""
+
+			[[ ! $(type pip3 2>/dev/null) ]] && colorEcho $RED "pip3 no install!" && exit 1
+
+			if [[ -e /usr/local/multi-v2ray/multi-v2ray.conf ]];then
+				TEMP_VALUE=$(cat /usr/local/multi-v2ray/multi-v2ray.conf|grep domain|awk 'NR==1')
+				DOMAIN=${TEMP_VALUE/*=}
+				rm -rf /usr/local/multi-v2ray
+			fi
+
+			pip3 install -U v2ray_util
+
+			if [[ -e $UTIL_PATH ]];then
+				[[ -z $(cat $UTIL_PATH|grep lang) ]] && echo "lang=en" >> $UTIL_PATH
+			else
+				mkdir -p /etc/v2ray_util
+				curl $UTIL_CFG > $UTIL_PATH
+				[[ ! -z $DOMAIN ]] && sed -i "s/^domain.*/domain=${DOMAIN}/g" $UTIL_PATH
+			fi
+
+			[[ $CHINESE == 1 ]] && sed -i "s/lang=en/lang=zh/g" $UTIL_PATH
+
+			rm -f /usr/local/bin/v2ray >/dev/null 2>&1
+			ln -s $(which v2ray-util) /usr/local/bin/v2ray
+
+			#更新v2ray bash_completion脚本
+			curl $BASH_COMPLETION_SHELL > /etc/bash_completion.d/v2ray.bash
+			[[ -z $(echo $SHELL|grep zsh) ]] && source /etc/bash_completion.d/v2ray.bash
+			
+			#安装/更新V2ray主程序
+			bash <(curl -L -s https://install.direct/go.sh)
+		}
+
+		#时间同步
+		timeSync() {
+			if [[ ${INSTALL_WAY} == 0 ]];then
+				echo -e "${Info} Time Synchronizing.. ${Font}"
+				ntpdate pool.ntp.org
+				if [[ $? -eq 0 ]];then 
+					echo -e "${OK} Time Sync Success ${Font}"
+					echo -e "${OK} now: `date -R`${Font}"
+					sleep 1
+				else
+					echo -e "${Error} Time sync fail, please run command to sync:${Font}${Yellow}ntpdate pool.ntp.org${Font}"
+				fi
+			fi
+		}
+
+		profileInit() {
+
+			#清理v2ray模块环境变量
+			[[ $(grep v2ray ~/$ENV_FILE) ]] && sed -i '/v2ray/d' ~/$ENV_FILE && source ~/$ENV_FILE
+
+			#解决Python3中文显示问题
+			[[ -z $(grep PYTHONIOENCODING=utf-8 ~/$ENV_FILE) ]] && echo "export PYTHONIOENCODING=utf-8" >> ~/$ENV_FILE && source ~/$ENV_FILE
+
+			# 加入v2ray tab补全环境变量
+			[[ -z $(echo $SHELL|grep zsh) && -z $(grep v2ray.bash ~/$ENV_FILE) ]] && echo "source /etc/bash_completion.d/v2ray.bash" >> ~/$ENV_FILE && source ~/$ENV_FILE
+
+			#全新安装的新配置
+			if [[ ${INSTALL_WAY} == 0 ]];then 
+				v2ray new
+			else
+				v2ray convert
+			fi
+
+			bash <(curl -L -s $CLEAN_IPTABLES_SHELL)
+			echo ""
+		}
+
+		installFinish() {
+			#回到原点
+			cd ${BEGIN_PATH}
+			[[ ${INSTALL_WAY} == 0 ]] && WAY="install" || WAY="update"
+			colorEcho  ${GREEN} "multi-v2ray ${WAY} success!\n"
+			clear
+			v2ray info
+			echo -e "\n	--胖波比--
+——————————————————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 管理V2Ray
+ ${Green_font_prefix}2.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
+——————————————————————————————————" && echo
+			read -p " 请输入数字 [1-3](默认:3):" num
+			[ -z "${num}" ] && num=3
+			case "$num" in
+				1)
+				v2ray
+				;;
+				2)
+				start_menu_main
+				;;
+				3)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-3]:"
+				sleep 2s
+				installFinish
+				;;
+			esac
+		}
+
+		main() {
+			[[ ${HELP} == 1 ]] && help && return
+			[[ ${REMOVE} == 1 ]] && removeV2Ray && return
+			[[ ${INSTALL_WAY} == 0 ]] && colorEcho ${BLUE} "new install\n"
+			
+			checkSys
+			installDependent
+			closeSELinux
+			timeSync
+			
+			#设置定时任务
+			[[ -z $(crontab -l|grep v2ray) ]] && planUpdate
+			updateProject
+			profileInit
+			service v2ray restart
+			installFinish
+		}
+		main
 	}
-
-	#######get params#########
-	while [[ $# > 0 ]];do
-		key="$1"
-		case $key in
-			--remove)
-			REMOVE=1
-			;;
-			-h|--help)
-			HELP=1
-			;;
-			-k|--keep)
-			INSTALL_WAY=1
-			colorEcho ${BLUE} "keep v2ray profile to update\n"
-			;;
-			--zh)
-			CHINESE=1
-			colorEcho ${BLUE} "安装中文版..\n"
-			;;
-			*)
-					# unknown option
-			;;
-		esac
-		shift # past argument or value
-	done
-	#############################
-
-	help(){
-		echo "bash multi-v2ray.sh [-h|--help] [-k|--keep] [--remove]"
-		echo "  -h, --help           Show help"
-		echo "  -k, --keep           keep the v2ray config.json to update"
-		echo "      --remove         remove v2ray && multi-v2ray"
-		echo "                       no params to new install"
-		return 0
-	}
-
+	
 	removeV2Ray() {
 		#卸载V2ray官方脚本
 		systemctl stop v2ray  >/dev/null 2>&1
@@ -242,214 +464,49 @@ install_v2ray(){
 		source ~/$ENV_FILE
 
 		colorEcho ${GREEN} "uninstall success!"
+		sleep 2s
 	}
-
-	closeSELinux() {
-		#禁用SELinux
-		if [ -s /etc/selinux/config ] && grep 'SELINUX=enforcing' /etc/selinux/config; then
-			sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
-			setenforce 0
-		fi
-	}
-
-	checkSys() {
-		#检查是否为Root
-		[ $(id -u) != "0" ] && { colorEcho ${RED} "Error: You must be root to run this script"; exit 1; }
-
-		#检查系统信息
-		if [[ -e /etc/redhat-release ]];then
-			if [[ $(cat /etc/redhat-release | grep Fedora) ]];then
-				OS='Fedora'
-				PACKAGE_MANAGER='dnf'
-			else
-				OS='CentOS'
-				PACKAGE_MANAGER='yum'
-			fi
-		elif [[ $(cat /etc/issue | grep Debian) ]];then
-			OS='Debian'
-			PACKAGE_MANAGER='apt-get'
-		elif [[ $(cat /etc/issue | grep Ubuntu) ]];then
-			OS='Ubuntu'
-			PACKAGE_MANAGER='apt-get'
-		elif [[ $(cat /etc/issue | grep Raspbian) ]];then
-			OS='Raspbian'
-			PACKAGE_MANAGER='apt-get'
-		else
-			colorEcho ${RED} "Not support OS, Please reinstall OS and retry!"
-			exit 1
-		fi
-	}
-
-	#安装依赖
-	installDependent(){
-		if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
-			${PACKAGE_MANAGER} install ntpdate socat crontabs lsof which -y
-		else
-			${PACKAGE_MANAGER} update
-			${PACKAGE_MANAGER} install ntpdate socat cron lsof -y
-		fi
-
-		#install python3 & pip3
-		bash <(curl -sL https://git.io/fhqMz)
-	}
-
-	#设置定时升级任务
-	planUpdate(){
-		if [[ $CHINESE == 1 ]];then
-			#计算北京时间早上3点时VPS的实际时间
-			ORIGIN_TIME_ZONE=$(date -R|awk '{printf"%d",$6}')
-			LOCAL_TIME_ZONE=${ORIGIN_TIME_ZONE%00}
-			BEIJING_ZONE=8
-			DIFF_ZONE=$[$BEIJING_ZONE-$LOCAL_TIME_ZONE]
-			LOCAL_TIME=$[$BEIJING_UPDATE_TIME-$DIFF_ZONE]
-			if [ $LOCAL_TIME -lt 0 ];then
-				LOCAL_TIME=$[24+$LOCAL_TIME]
-			elif [ $LOCAL_TIME -ge 24 ];then
-				LOCAL_TIME=$[$LOCAL_TIME-24]
-			fi
-			colorEcho ${BLUE} "beijing time ${BEIJING_UPDATE_TIME}, VPS time: ${LOCAL_TIME}\n"
-		else
-			LOCAL_TIME=3
-		fi
-		OLD_CRONTAB=$(crontab -l)
-		echo "SHELL=/bin/bash" >> crontab.txt
-		echo "${OLD_CRONTAB}" >> crontab.txt
-		echo "0 ${LOCAL_TIME} * * * bash <(curl -L -s https://install.direct/go.sh) | tee -a /root/v2rayUpdate.log && service v2ray restart" >> crontab.txt
-		crontab crontab.txt
-		sleep 1
-		if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
-			service crond restart
-		else
-			service cron restart
-		fi
-		rm -f crontab.txt
-		colorEcho ${GREEN} "success open schedule update task: beijing time ${BEIJING_UPDATE_TIME}\n"
-	}
-
-	updateProject() {
-		local DOMAIN=""
-
-		[[ ! $(type pip3 2>/dev/null) ]] && colorEcho $RED "pip3 no install!" && exit 1
-
-		if [[ -e /usr/local/multi-v2ray/multi-v2ray.conf ]];then
-			TEMP_VALUE=$(cat /usr/local/multi-v2ray/multi-v2ray.conf|grep domain|awk 'NR==1')
-			DOMAIN=${TEMP_VALUE/*=}
-			rm -rf /usr/local/multi-v2ray
-		fi
-
-		pip3 install -U v2ray_util
-
-		if [[ -e $UTIL_PATH ]];then
-			[[ -z $(cat $UTIL_PATH|grep lang) ]] && echo "lang=en" >> $UTIL_PATH
-		else
-			mkdir -p /etc/v2ray_util
-			curl $UTIL_CFG > $UTIL_PATH
-			[[ ! -z $DOMAIN ]] && sed -i "s/^domain.*/domain=${DOMAIN}/g" $UTIL_PATH
-		fi
-
-		[[ $CHINESE == 1 ]] && sed -i "s/lang=en/lang=zh/g" $UTIL_PATH
-
-		rm -f /usr/local/bin/v2ray >/dev/null 2>&1
-		ln -s $(which v2ray-util) /usr/local/bin/v2ray
-
-		#更新v2ray bash_completion脚本
-		curl $BASH_COMPLETION_SHELL > /etc/bash_completion.d/v2ray.bash
-		[[ -z $(echo $SHELL|grep zsh) ]] && source /etc/bash_completion.d/v2ray.bash
-		
-		#安装/更新V2ray主程序
-		bash <(curl -L -s https://install.direct/go.sh)
-	}
-
-	#时间同步
-	timeSync() {
-		if [[ ${INSTALL_WAY} == 0 ]];then
-			echo -e "${Info} Time Synchronizing.. ${Font}"
-			ntpdate pool.ntp.org
-			if [[ $? -eq 0 ]];then 
-				echo -e "${OK} Time Sync Success ${Font}"
-				echo -e "${OK} now: `date -R`${Font}"
-				sleep 1
-			else
-				echo -e "${Error} Time sync fail, please run command to sync:${Font}${Yellow}ntpdate pool.ntp.org${Font}"
-			fi
-		fi
-	}
-
-	profileInit() {
-
-		#清理v2ray模块环境变量
-		[[ $(grep v2ray ~/$ENV_FILE) ]] && sed -i '/v2ray/d' ~/$ENV_FILE && source ~/$ENV_FILE
-
-		#解决Python3中文显示问题
-		[[ -z $(grep PYTHONIOENCODING=utf-8 ~/$ENV_FILE) ]] && echo "export PYTHONIOENCODING=utf-8" >> ~/$ENV_FILE && source ~/$ENV_FILE
-
-		# 加入v2ray tab补全环境变量
-		[[ -z $(echo $SHELL|grep zsh) && -z $(grep v2ray.bash ~/$ENV_FILE) ]] && echo "source /etc/bash_completion.d/v2ray.bash" >> ~/$ENV_FILE && source ~/$ENV_FILE
-
-		#全新安装的新配置
-		if [[ ${INSTALL_WAY} == 0 ]];then 
-			v2ray new
-		else
-			v2ray convert
-		fi
-
-		bash <(curl -L -s $CLEAN_IPTABLES_SHELL)
-		echo ""
-	}
-
-	installFinish() {
-		#回到原点
-		cd ${BEGIN_PATH}
-		[[ ${INSTALL_WAY} == 0 ]] && WAY="install" || WAY="update"
-		colorEcho  ${GREEN} "multi-v2ray ${WAY} success!\n"
+	
+	start_menu_v2ray(){
 		clear
-		v2ray info
-		echo -e "\nplease input 'v2ray' command to manage v2ray
-——————————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 管理V2Ray
- ${Green_font_prefix}2.${Font_color_suffix} 回到主页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
-——————————————————————————————————" && echo
-
-		read -p " 请输入数字 [1-3](默认:3):" num
-		[ -z "${num}" ] && num=3
+		echo && echo -e " V2Ray一键安装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+    -- 胖波比 --
+		
+———————V2Ray安装管理———————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装V2Ray
+ ${Green_font_prefix}2.${Font_color_suffix} 管理V2Ray
+ ${Green_font_prefix}3.${Font_color_suffix} 卸载V2Ray
+ ${Green_font_prefix}4.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
+———————————————————————————" && echo
+		read -p " 请输入数字 [1-5](默认:5):" num
+		[ -z "${num}" ] && num=5
 		case "$num" in
 			1)
-			v2ray
+			install_v2ray
 			;;
 			2)
-			start_menu_main
+			clear
+			v2ray
 			;;
 			3)
+			removeV2Ray
+			;;
+			4)
+			start_menu_main
+			;;
+			5)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-3]:"
+			echo -e "${Error}:请输入正确数字 [1-5]"
 			sleep 2s
-			installFinish
+			start_menu_v2ray
 			;;
 		esac
 	}
-
-	main() {
-		[[ ${HELP} == 1 ]] && help && return
-		[[ ${REMOVE} == 1 ]] && removeV2Ray && return
-		[[ ${INSTALL_WAY} == 0 ]] && colorEcho ${BLUE} "new install\n"
-		
-		checkSys
-		installDependent
-		closeSELinux
-		timeSync
-		
-		#设置定时任务
-		[[ -z $(crontab -l|grep v2ray) ]] && planUpdate
-		updateProject
-		profileInit
-		service v2ray restart
-		installFinish
-	}
-	main
+	start_menu_v2ray
 }
 
 #安装SSR
@@ -457,13 +514,6 @@ install_ssr(){
 	#!/usr/bin/env bash
 	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 	export PATH
-	#=================================================================#
-	#   System Required:  CentOS 6,7, Debian, Ubuntu                  #
-	#   Description: One click Install ShadowsocksR Server            #
-	#   Author: Teddysun <i@teddysun.com>                             #
-	#   Thanks: @breakwa11 <https://twitter.com/breakwa11>            #
-	#   Intro:  https://shadowsocks.be/9.html                         #
-	#=================================================================#
 
 	clear
 	libsodium_file="libsodium-1.0.17"
@@ -485,7 +535,6 @@ install_ssr(){
 			setenforce 0
 		fi
 	}
-
 	#Check system
 	check_sys_ssr(){
 		local checkType=$1
@@ -531,8 +580,7 @@ install_ssr(){
 			fi
 		fi
 	}
-	
-	# Get version
+		# Get version
 	getversion(){
 		if [[ -s /etc/redhat-release ]]; then
 			grep -oE  "[0-9.]+" /etc/redhat-release
@@ -540,7 +588,6 @@ install_ssr(){
 			grep -oE  "[0-9.]+" /etc/issue
 		fi
 	}
-
 	# CentOS version
 	centosversion(){
 		if check_sys_ssr sysRelease centos; then
@@ -747,7 +794,6 @@ install_ssr(){
 		char=`get_char`
 		cd ${cur_dir}
 	}
-
 	# Download files
 	download_files(){
 		# Download libsodium file
@@ -773,7 +819,6 @@ install_ssr(){
 			fi
 		fi
 	}
-
 	# Config ShadowsocksR
 	config_shadowsocks(){
 		cat > /etc/shadowsocks.json<<-EOF
@@ -798,7 +843,6 @@ install_ssr(){
 }
 EOF
 	}
-
 	# Install ShadowsocksR
 	install(){
 		# Install libsodium
@@ -869,13 +913,11 @@ EOF
 			exit 1
 		fi
 	}
-
 	# Install cleanup
 	install_cleanup(){
 		cd ${cur_dir}
 		rm -rf ${shadowsocks_r_file}.tar.gz ${shadowsocks_r_file} ${libsodium_file}.tar.gz ${libsodium_file}
 	}
-
 	# Uninstall ShadowsocksR
 	uninstall_shadowsocksr(){
 		printf "Are you sure uninstall ShadowsocksR? (y/n)"
@@ -903,7 +945,6 @@ EOF
 			echo
 		fi
 	}
-
 	# Install ShadowsocksR
 	install_shadowsocksr(){
 		disable_selinux
@@ -932,7 +973,7 @@ EOF
 		#预处理
 		SSRprotocol=$(echo ${protocol} | sed 's/_compatible//g')
 		SSRobfs=$(echo ${obfs} | sed 's/_compatible//g')
-		Remarksbase64=$(urlsafe_base64 "企鹅号:3450633979有问题随时戳我")
+		Remarksbase64=$(urlsafe_base64 "企鹅号:3450633979")
 		Groupbase64=$(urlsafe_base64 "我们爱中国")
 	}
 	#读取端口密码
@@ -1197,6 +1238,7 @@ EOF
 	#更改端口
 	change_port(){
 		clear
+		get_pp
 		jq '.port_password' /etc/shadowsocks.json
 		echo -e "${Info}以上是配置文件的内容\n"
 		unset port
@@ -1204,6 +1246,7 @@ EOF
 		do
 			read -p "请输入要修改的端口号：" port
 		done
+		password=$(cat ppj | grep "${port}:" | awk -F ':' '{print $2}')
 		delete_firewall
 		port1=${port}
 		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
@@ -1212,7 +1255,6 @@ EOF
 		done
 		add_firewall
 		firewall_restart
-		password=$(openssl rand -base64 6)
 		sed -i "s/${port1}/${port}/g"  /etc/shadowsocks.json
 		set_ssrurl
 		echo -e "	————胖波比————
@@ -1393,17 +1435,8 @@ install_bbr(){
 	#!/usr/bin/env bash
 	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 	export PATH
-
-	#=================================================
-	#	System Required: CentOS 6/7,Debian 8/9,Ubuntu 16+
-	#	Description: BBR+BBR魔改版+BBRplus+Lotserver
-	#	Version: 1.3.2
-	#	Author: 千影,cx9208
-	#	Blog: https://www.94ish.me/
-	#=================================================
-
+	#Blog: https://www.94ish.me/
 	github="raw.githubusercontent.com/chiakge/Linux-NetSpeed/master"
-
 	#安装BBR内核
 	installbbr(){
 		kernel_version="4.11.8"
@@ -2020,16 +2053,631 @@ install_bbr(){
 	start_menu_bbr
 }
 
+#安装宝塔面板
+install_btpanel(){
+	#!/bin/bash
+	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
+	export PATH
+	LANG=en_US.UTF-8
+
+	Red_Error(){
+		echo '=================================================';
+		printf '\033[1;31;40m%b\033[0m\n' "$1";
+		exit 0;
+	}
+
+	is64bit=$(getconf LONG_BIT)
+	if [ "${is64bit}" != '64' ];then
+		Red_Error "抱歉, 6.0不支持32位系统, 请使用64位系统或安装宝塔5.9!";
+	fi
+	isPy26=$(python -V 2>&1|grep '2.6.')
+	if [ "${isPy26}" ];then
+		Red_Error "抱歉, 6.0不支持Centos6.x,请安装Centos7或安装宝塔5.9";
+	fi
+	Install_Check(){
+		while [ "$yes" != 'yes' ] && [ "$yes" != 'n' ]
+		do
+			echo -e "----------------------------------------------------"
+			echo -e "已有Web环境，安装宝塔可能影响现有站点"
+			echo -e "Web service is alreday installed,Can't install panel"
+			echo -e "----------------------------------------------------"
+			read -p "输入yes强制安装/Enter yes to force installation (yes/n): " yes;
+		done 
+		if [ "$yes" == 'n' ];then
+			exit;
+		fi
+	}
+	System_Check(){
+		for serviceS in nginx httpd mysqld
+		do
+			if [ -f "/etc/init.d/${serviceS}" ]; then
+				if [ "${serviceS}" = "httpd" ]; then
+					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/apache)
+				elif [ "${serviceS}" = "mysqld" ]; then
+					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/mysql)
+				else
+					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/${serviceS})
+				fi
+				[ -z "${serviceCheck}" ] && Install_Check
+			fi
+		done
+	}
+
+	Auto_Swap()
+	{
+		swap=$(free |grep Swap|awk '{print $2}')
+		if [ ${swap} -gt 1 ];then
+			echo "Swap total sizse: $swap";
+			return;
+		fi
+		if [ ! -d /www ];then
+			mkdir /www
+		fi
+		swapFile="/www/swap"
+		dd if=/dev/zero of=$swapFile bs=1M count=1025
+		mkswap -f $swapFile
+		swapon $swapFile
+		echo "$swapFile    swap    swap    defaults    0 0" >> /etc/fstab
+		swap=`free |grep Swap|awk '{print $2}'`
+		if [ $swap -gt 1 ];then
+			echo "Swap total sizse: $swap";
+			return;
+		fi
+		
+		sed -i "/\/www\/swap/d" /etc/fstab
+		rm -f $swapFile
+	}
+
+	Service_Add(){
+		if [ "${PM}" == "yum" ] || [ "${PM}" == "dnf" ]; then
+			chkconfig --add bt
+			chkconfig --level 2345 bt on
+		elif [ "${PM}" == "apt-get" ]; then
+			update-rc.d bt defaults
+		fi 
+	}
+
+	get_node_url(){
+		echo '---------------------------------------------';
+		echo "Selected download node...";
+		nodes=(http://183.235.223.101:3389 http://119.188.210.21:5880 http://125.88.182.172:5880 http://103.224.251.67 http://45.32.116.160 http://download.bt.cn);
+		i=1;
+		if [ ! -f /bin/curl ];then
+			if [ "${PM}" = "yum" ]; then
+				yum install curl -y
+			elif [ "${PM}" = "apt-get" ]; then
+				apt-get install curl -y
+			fi
+		fi
+		for node in ${nodes[@]};
+		do
+			start=`date +%s.%N`
+			result=`curl -sS --connect-timeout 3 -m 60 $node/check.txt`
+			if [ $result = 'True' ];then
+				end=`date +%s.%N`
+				start_s=`echo $start | cut -d '.' -f 1`
+				start_ns=`echo $start | cut -d '.' -f 2`
+				end_s=`echo $end | cut -d '.' -f 1`
+				end_ns=`echo $end | cut -d '.' -f 2`
+				time_micro=$(( (10#$end_s-10#$start_s)*1000000 + (10#$end_ns/1000 - 10#$start_ns/1000) ))
+				time_ms=$(($time_micro/1000))
+				values[$i]=$time_ms;
+				urls[$time_ms]=$node
+				i=$(($i+1))
+			fi
+		done
+		j=5000
+		for n in ${values[@]};
+		do
+			if [ $j -gt $n ];then
+				j=$n
+			fi
+		done
+		if [ $j = 5000 ];then
+			NODE_URL='http://download.bt.cn';
+		else
+			NODE_URL=${urls[$j]}
+		fi
+		download_Url=$NODE_URL
+		echo "Download node: $download_Url";
+		echo '---------------------------------------------';
+	}
+	Install_RPM_Pack(){
+		yumPath=/etc/yum.conf
+		isExc=`cat $yumPath|grep httpd`
+		if [ "$isExc" = "" ];then
+			echo "exclude=httpd nginx php mysql mairadb python-psutil python2-psutil" >> $yumPath
+		fi
+
+		yum install ntp -y
+		rm -rf /etc/localtime
+		ln -s /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+
+		#尝试同步时间(从bt.cn)
+		echo 'Synchronizing system time...'
+		getBtTime=$(curl -sS --connect-timeout 3 -m 60 http://www.bt.cn/api/index/get_time)
+		if [ "${getBtTime}" ];then	
+			date -s "$(date -d @$getBtTime +"%Y-%m-%d %H:%M:%S")"
+		fi
+
+		#尝试同步国际时间(从ntp服务器)
+		ntpdate 0.asia.pool.ntp.org
+		setenforce 0
+		startTime=`date +%s`
+		sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
+		yumPacks="wget python-devel python-imaging zip unzip openssl openssl-devel gcc libxml2 libxml2-devel libxslt* zlib zlib-devel libjpeg-devel libpng-devel libwebp libwebp-devel freetype freetype-devel lsof pcre pcre-devel vixie-cron crontabs icu libicu-devel c-ares"
+		yum install -y ${yumPacks}
+
+		for yumPack in ${yumPacks}
+		do
+			rpmPack=$(rpm -q ${yumPack})
+			packCheck=$(echo ${rpmPack}|grep not)
+			if [ "${packCheck}" ]; then
+				yum install ${yumPack} -y
+			fi
+		done
+
+		if [ -f "/usr/bin/dnf" ]; then
+			dnf install -y redhat-rpm-config
+		fi
+		yum install python-devel -y
+	}
+	Install_Deb_Pack(){
+		ln -sf bash /bin/sh
+		apt-get update -y
+		apt-get install ruby -y
+		apt-get install lsb-release -y
+		#apt-get install ntp ntpdate -y
+		#/etc/init.d/ntp stop
+		#update-rc.d ntp remove
+		#cat >>~/.profile<<EOF
+		#TZ='Asia/Shanghai'; export TZ
+		#EOF
+		#rm -rf /etc/localtime
+		#cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+		#echo 'Synchronizing system time...'
+		#ntpdate 0.asia.pool.ntp.org
+		#apt-get upgrade -y
+		for pace in wget curl python python-dev python-imaging zip unzip openssl libssl-dev gcc libxml2 libxml2-dev libxslt zlib1g zlib1g-dev libjpeg-dev libpng-dev lsof libpcre3 libpcre3-dev cron;
+		do apt-get -y install $pace --force-yes; done
+		apt-get -y install python-dev
+
+		tmp=$(python -V 2>&1|awk '{print $2}')
+		pVersion=${tmp:0:3}
+		if [ "${pVersion}" == '2.7' ];then
+			apt-get -y install python2.7-dev
+		fi
+	}
+	Install_Bt(){
+		setup_path="/www"
+		read -p "请输入宝塔面板登录端口(默认:1314):" panelPort
+		[ -z "${panelPort}" ] && panelPort=1314
+		if [ -f ${setup_path}/server/panel/data/port.pl ];then
+			panelPort=$(cat ${setup_path}/server/panel/data/port.pl)
+		fi
+		mkdir -p ${setup_path}/server/panel/logs
+		mkdir -p ${setup_path}/server/panel/vhost/apache
+		mkdir -p ${setup_path}/server/panel/vhost/nginx
+		mkdir -p ${setup_path}/server/panel/vhost/rewrite
+		mkdir -p /www/server
+		mkdir -p /www/wwwroot
+		mkdir -p /www/wwwlogs
+		mkdir -p /www/backup/database
+		mkdir -p /www/backup/site
+
+		if [ ! -f "/usr/bin/unzip" ]; then
+			if [ "${PM}" = "yum" ]; then
+				yum install unzip -y
+			elif [ "${PM}" = "apt-get" ]; then
+				apt-get install unzip -y
+			fi
+		fi
+
+		if [ -f "/etc/init.d/bt" ]; then
+			/etc/init.d/bt stop
+			sleep 1
+		fi
+
+		wget -O panel.zip ${download_Url}/install/src/panel6.zip -T 10
+		wget -O /etc/init.d/bt ${download_Url}/install/src/bt6.init -T 10
+
+		if [ -f "${setup_path}/server/panel/data/default.db" ];then
+			if [ -d "/${setup_path}/server/panel/old_data" ];then
+				rm -rf ${setup_path}/server/panel/old_data
+			fi
+			mkdir -p ${setup_path}/server/panel/old_data
+			mv -f ${setup_path}/server/panel/data/default.db ${setup_path}/server/panel/old_data/default.db
+			mv -f ${setup_path}/server/panel/data/system.db ${setup_path}/server/panel/old_data/system.db
+			mv -f ${setup_path}/server/panel/data/port.pl ${setup_path}/server/panel/old_data/port.pl
+			mv -f ${setup_path}/server/panel/data/admin_path.pl ${setup_path}/server/panel/old_data/admin_path.pl
+		fi
+
+		unzip -o panel.zip -d ${setup_path}/server/ > /dev/null
+
+		if [ -d "${setup_path}/server/panel/old_data" ];then
+			mv -f ${setup_path}/server/panel/old_data/default.db ${setup_path}/server/panel/data/default.db
+			mv -f ${setup_path}/server/panel/old_data/system.db ${setup_path}/server/panel/data/system.db
+			mv -f ${setup_path}/server/panel/old_data/port.pl ${setup_path}/server/panel/data/port.pl
+			mv -f ${setup_path}/server/panel/old_data/admin_path.pl ${setup_path}/server/panel/data/admin_path.pl
+			if [ -d "/${setup_path}/server/panel/old_data" ];then
+				rm -rf ${setup_path}/server/panel/old_data
+			fi
+		fi
+
+		rm -f panel.zip
+
+		if [ ! -f ${setup_path}/server/panel/tools.py ];then
+			Red_Error "ERROR: Failed to download, please try install again!"
+		fi
+
+		rm -f ${setup_path}/server/panel/class/*.pyc
+		rm -f ${setup_path}/server/panel/*.pyc
+
+		chmod +x /etc/init.d/bt
+		chmod -R 600 ${setup_path}/server/panel
+		chmod -R +x ${setup_path}/server/panel/script
+		ln -sf /etc/init.d/bt /usr/bin/bt
+		echo "${panelPort}" > ${setup_path}/server/panel/data/port.pl
+	}
+	Install_Pip(){
+		isPip=$(pip -V|grep python)
+		if [ -z "${isPip}" ];then
+			wget -O get-pip.py ${download_Url}/src/get-pip.py
+			python get-pip.py
+			rm -f get-pip.py
+			isPip=$(pip -V|grep python)
+			if [ -z "${isPip}" ];then
+				if [ "${PM}" = "yum" ]; then
+					yum install python-pip -y
+				elif [ "${PM}" = "apt-get" ]; then
+					apt-get install python-pip -y
+				fi
+			fi
+		fi
+	}
+	Install_Pillow()
+	{
+		isSetup=$(python -m PIL 2>&1|grep package)
+		if [ "$isSetup" = "" ];then
+			isFedora = `cat /etc/redhat-release |grep Fedora`
+			if [ "${isFedora}" ];then
+				pip install Pillow
+				return;
+			fi
+			wget -O Pillow-3.2.0.zip $download_Url/install/src/Pillow-3.2.0.zip -T 10
+			unzip Pillow-3.2.0.zip
+			rm -f Pillow-3.2.0.zip
+			cd Pillow-3.2.0
+			python setup.py install
+			cd ..
+			rm -rf Pillow-3.2.0
+		fi
+		
+		isSetup=$(python -m PIL 2>&1|grep package)
+		if [ -z "${isSetup}" ];then
+			Red_Error "Pillow installation failed."
+		fi
+	}
+	Install_psutil()
+	{
+		isSetup=`python -m psutil 2>&1|grep package`
+		if [ "$isSetup" = "" ];then
+			wget -O psutil-5.2.2.tar.gz $download_Url/install/src/psutil-5.2.2.tar.gz -T 10
+			tar xvf psutil-5.2.2.tar.gz
+			rm -f psutil-5.2.2.tar.gz
+			cd psutil-5.2.2
+			python setup.py install
+			cd ..
+			rm -rf psutil-5.2.2
+		fi
+		isSetup=$(python -m psutil 2>&1|grep package)
+		if [ "${isSetup}" = "" ];then
+			Red_Error "Psutil installation failed."
+		fi
+	}
+	Install_chardet()
+	{
+		isSetup=$(python -m chardet 2>&1|grep package)
+		if [ "${isSetup}" = "" ];then
+			wget -O chardet-2.3.0.tar.gz $download_Url/install/src/chardet-2.3.0.tar.gz -T 10
+			tar xvf chardet-2.3.0.tar.gz
+			rm -f chardet-2.3.0.tar.gz
+			cd chardet-2.3.0
+			python setup.py install
+			cd ..
+			rm -rf chardet-2.3.0
+		fi	
+		
+		isSetup=$(python -m chardet 2>&1|grep package)
+		if [ -z "${isSetup}" ];then
+			Red_Error "chardet installation failed."
+		fi
+	}
+	Install_Python_Lib(){
+		isPsutil=$(python -m psutil 2>&1|grep package)
+		if [ "${isPsutil}" ];then
+			PSUTIL_VERSION=`python -c 'import psutil;print psutil.__version__;' |grep '5.'` 
+			if [ -z "${PSUTIL_VERSION}" ];then
+				pip uninstall psutil -y 
+			fi
+		fi
+
+		if [ "${PM}" = "yum" ]; then
+			yum install libffi-devel -y
+		elif [ "${PM}" = "apt-get" ]; then
+			apt install libffi-dev -y
+		fi
+
+		curl -Ss --connect-timeout 3 -m 60 http://download.bt.cn/install/pip_select.sh|bash
+		pip install --upgrade setuptools 
+		pip install -r ${setup_path}/server/panel/requirements.txt
+		isGevent=$(pip list|grep gevent)
+		if [ "$isGevent" = "" ];then
+			if [ "${PM}" = "yum" ]; then
+				yum install python-gevent -y
+			elif [ "${PM}" = "apt-get" ]; then
+				apt-get install python-gevent -y
+			fi
+		fi
+		pip install psutil chardet virtualenv Flask Flask-Session Flask-SocketIO flask-sqlalchemy Pillow gunicorn gevent-websocket paramiko
+		
+		Install_Pillow
+		Install_psutil
+		Install_chardet
+		pip install gunicorn
+
+	}
+
+	Set_Bt_Panel(){
+		password=$(cat /dev/urandom | head -n 16 | md5sum | head -c 8)
+		sleep 1
+		admin_auth="/www/server/panel/data/admin_path.pl"
+		if [ ! -f ${admin_auth} ];then
+			auth_path=$(cat /dev/urandom | head -n 16 | md5sum | head -c 8)
+			echo "/${auth_path}" > ${admin_auth}
+		fi
+		auth_path=$(cat ${admin_auth})
+		cd ${setup_path}/server/panel/
+		/etc/init.d/bt start
+		python -m py_compile tools.py
+		python tools.py username
+		username=$(python tools.py panel ${password})
+		cd ~
+		echo "${password}" > ${setup_path}/server/panel/default.pl
+		chmod 600 ${setup_path}/server/panel/default.pl
+		/etc/init.d/bt restart
+		sleep 3
+		isStart=$(ps aux |grep 'gunicorn'|grep -v grep|awk '{print $2}')
+		if [ -z "${isStart}" ];then
+			Red_Error "ERROR: The BT-Panel service startup failed."
+		fi
+	}
+	Set_Firewall(){
+		sshPort=$(cat /etc/ssh/sshd_config | grep 'Port '|awk '{print $2}')
+		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
+			systemctl enable firewalld
+			systemctl start firewalld
+			firewall-cmd --set-default-zone=public > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=20/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=21/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=22/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=80/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=888/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=${panelPort}/tcp > /dev/null 2>&1
+			firewall-cmd --permanent --zone=public --add-port=${sshPort}/tcp > /dev/null 2>&1
+			#firewall-cmd --permanent --zone=public --add-port=39000-40000/tcp > /dev/null 2>&1
+			firewall-cmd --reload
+		else
+			iptables -I INPUT -p tcp --dport 20 -j ACCEPT
+			iptables -I INPUT -p tcp --dport 21 -j ACCEPT
+			iptables -I INPUT -p tcp --dport 22 -j ACCEPT
+			iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+			iptables -I INPUT -p tcp --dport 888 -j ACCEPT
+			iptables -I INPUT -p tcp --dport ${panelPort} -j ACCEPT
+			iptables -I INPUT -p tcp --dport ${sshPort} -j ACCEPT
+			#iptables -I INPUT -p tcp --dport 39000:40000 -j ACCEPT
+			if [[ ${release} == "centos" ]]; then
+				service iptables save
+				service ip6tables save
+			else
+				iptables-save > /etc/iptables.up.rules
+				ip6tables-save > /etc/ip6tables.up.rules
+			fi
+		fi
+	}
+	Get_Ip_Address(){
+		getIpAddress=""
+		getIpAddress=$(curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/getIpAddress)
+		if [ -z "${getIpAddress}" ] || [ "${getIpAddress}" = "0.0.0.0" ]; then
+			isHosts=$(cat /etc/hosts|grep 'www.bt.cn')
+			if [ -z "${isHosts}" ];then
+				echo "" >> /etc/hosts
+				echo "103.224.251.67 www.bt.cn" >> /etc/hosts
+				getIpAddress=$(curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/getIpAddress)
+				if [ -z "${getIpAddress}" ];then
+					sed -i "/bt.cn/d" /etc/hosts
+				fi
+			fi
+		fi
+
+		ipv4Check=$(python -c "import re; print(re.match('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$','${getIpAddress}'))")
+		if [ "${ipv4Check}" == "None" ];then
+			ipv6Address=$(echo ${getIpAddress}|tr -d "[]")
+			ipv6Check=$(python -c "import re; print(re.match('^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$','${ipv6Address}'))")
+			if [ "${ipv6Check}" == "None" ]; then
+				getIpAddress="SERVER_IP"
+			else
+				echo "True" > ${setup_path}/server/panel/data/ipv6.pl
+				sleep 1
+				/etc/init.d/bt restart
+			fi
+		fi
+
+		if [ "${getIpAddress}" != "SERVER_IP" ];then
+			echo "${getIpAddress}" > ${setup_path}/server/panel/data/iplist.txt
+		fi
+	}
+	Setup_Count(){
+		curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/SetupCount?type=Linux\&o=$1 > /dev/null 2>&1
+		if [ "$1" != "" ];then
+			echo $1 > /www/server/panel/data/o.pl
+			cd /www/server/panel
+			python tools.py o
+		fi
+		echo /www > /var/bt_setupPath.conf
+	}
+
+	Install_Main(){
+		System_Check
+		get_node_url
+
+		Auto_Swap
+
+		startTime=`date +%s`
+		if [ "${PM}" = "yum" ]; then
+			Install_RPM_Pack
+		elif [ "${PM}" = "apt-get" ]; then
+			Install_Deb_Pack
+		fi
+
+		Install_Bt
+
+		Install_Pip
+		Install_Python_Lib
+
+		Set_Bt_Panel
+		Service_Add
+		Set_Firewall
+
+		Get_Ip_Address
+		Setup_Count
+	}
+
+	echo "
+	+----------------------------------------------------------------------
+	| Bt-WebPanel 6.0 FOR CentOS/Ubuntu/Debian
+	+----------------------------------------------------------------------
+	| Copyright © 2015-2099 BT-SOFT(http://www.bt.cn) All rights reserved.
+	+----------------------------------------------------------------------
+	| The WebPanel URL will be http://SERVER_IP:1314 when installed.
+	+----------------------------------------------------------------------
+	"
+	while [ "$go" != 'y' ] && [ "$go" != 'n' ]
+	do
+		read -p "Do you want to install Bt-Panel to the $setup_path directory now?(y/n): " go;
+	done
+
+	if [ "$go" == 'n' ];then
+		exit;
+	fi
+
+	Install_Main
+
+	echo -e "=================================================================="
+	echo -e "\033[32mCongratulations! Installed successfully!\033[0m"
+	echo -e "=================================================================="
+	echo  "Bt-Panel: http://${getIpAddress}:${panelPort}$auth_path"
+	echo -e "username: $username"
+	echo -e "password: $password"
+	echo -e "\033[33mWarning:\033[0m"
+	echo -e "\033[33mIf you cannot access the panel, \033[0m"
+	echo -e "\033[33mrelease the following port (1314|888|80|443|20|21) in the security group\033[0m"
+	echo -e "=================================================================="
+
+	endTime=`date +%s`
+	((outTime=($endTime-$startTime)/60))
+	echo -e "Time consumed:\033[32m $outTime \033[0mMinute!"
+	echo -e "${Info}请务必及时记录登录信息!"
+	echo -e "\n${Info}按任意键返回主页..."
+	char=`get_char`
+	start_menu_main
+}
+
+#安装ZFAKA
+manage_zfaka(){
+	install_zfaka(){
+		install_docker
+		mkdir -p /opt/zfaka && cd /opt/zfaka
+		rm -f docker-compose.yml
+		wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/zfaka/docker-compose.yml
+		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
+		docker-compose up -d
+		echo -e "\n${Info}首页地址： http://$(get_ip):666"
+		echo -e "打开网站安装数据库时请修改如下信息"
+		echo -e "请将数据库127.0.0.1改为：mysql"
+		echo -e "请将数据库密码改为：baiyue.one"
+		echo -e "${Info}phpMyAdmin地址：http://$(get_ip):602 用户名：root 密码：baiyue.one"
+		echo -e "\n${Info}按任意键返回主页..."
+		char=`get_char`
+		start_menu_main
+	}
+	uninstall_zfaka(){
+		cd /opt/zfaka
+		docker-compose down
+		rm -fr /opt/zfaka
+	}
+	restart_zfaka(){
+		cd /opt/zfaka
+		docker-compose restart
+	}
+	stop_zfaka(){
+		cd /opt/zfaka
+		docker-compose kill
+	}
+	start_menu_zfaka(){
+		clear
+		echo && echo -e " ZFAKA一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
+			
+————————ZFAKA管理————————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装ZFAKA
+ ${Green_font_prefix}2.${Font_color_suffix} 卸载ZFAKA
+ ${Green_font_prefix}3.${Font_color_suffix} 重启ZFAKA
+ ${Green_font_prefix}4.${Font_color_suffix} 停止ZFAKA
+ ${Green_font_prefix}5.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
+—————————————————————————" && echo
+		read -p " 请输入数字 [1-6](默认:6):" num
+		[ -z "${num}" ] && num=6
+		case "$num" in
+			1)
+			install_zfaka
+			;;
+			2)
+			uninstall_zfaka
+			;;
+			3)
+			restart_zfaka
+			;;
+			4)
+			stop_zfaka
+			;;
+			5)
+			start_menu_main
+			;;
+			6)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}:请输入正确数字 [1-6]"
+			sleep 2s
+			start_menu_zfaka
+			;;
+		esac
+	}
+	start_menu_zfaka
+}
+
 #安装SSR控制面板
 install_sspanel(){
 	#通知信息
 	sspanel_message(){
-		echo -e "${Info}搭建成功，现在您可以直接访问了\n"
-		echo -e "${Info}ss-panel地址：http://$(get_ip):666"   
-		echo -e "${Info}phpadmin地址：http://$(get_ip):8080"
-		echo -e "${Info}源码路径：/code/code"
-		echo -e "${Info}网页源文件路径：/opt/sspanel/code"
-		echo -e "${Info}数据库存储路径：/opt/sspanel/mysql"
+		echo -e "\n搭建成功，现在您可以直接访问了"
+		echo -e "${Info}ss-panel地址：http://$(get_ip):603"   
+		echo -e "源码路径：/code/code"
+		echo -e "网页源文件路径：/opt/sspanel/code"
+		echo -e "数据库存储路径：/opt/sspanel/mysql"
 		echo -e "\n之后执行剩下的相关命令：
 docker exec -it sspanel sh	#进入sspanel容器
 php xcat createAdmin		#创建管理员账户
@@ -2050,19 +2698,21 @@ exit						#退出
 	}
 	#稳定版
 	sspanel_install_a(){
+		install_docker
 		mkdir -p /opt/sspanel && cd /opt/sspanel
 		rm -f docker-compose.yml 
-		wget https://raw.githubusercontent.com/Baiyuetribe/ss-panel-v3-mod_Uim/dev/Docker/master/docker-compose.yml
+		wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/ssrpanel/a/docker-compose.yml
 		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
 		docker-compose up -d
 		sspanel_message
 	}
 	#开发版
 	sspanel_install_b(){
+		install_docker
 		mkdir -p /opt/sspanel && cd /opt/sspanel
 		rm -f docker-compose.yml
 		docker rmi -f baiyuetribe/sspanel:dev
-		wget https://raw.githubusercontent.com/Baiyuetribe/ss-panel-v3-mod_Uim/dev/Docker/docker-compose.yml
+		wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/ssrpanel/b/docker-compose.yml
 		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
 		docker-compose up -d
 		sspanel_message
@@ -2071,8 +2721,8 @@ exit						#退出
 	manage_sspanel(){
 		clear
 		echo -e "
-	SS-PANEL_NODE 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-		-- 胖波比 --
+SS-PANEL_NODE 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
 	  
 ————————————————————————————————
  ${Green_font_prefix}1.${Font_color_suffix} 安装SS-PANEL(稳定版-master分支)
@@ -2123,25 +2773,222 @@ exit						#退出
 	manage_sspanel
 }
 
+#安装Kodexplorer
+manage_kodexplorer(){
+	install_kodexplorer(){
+		install_docker
+		docker run -d -p 604:80 --name kodexplorer -v /opt/kodcloud:/code baiyuetribe/kodexplorer
+		echo -e "\n${Info}已安装完成!"
+		echo -e "${Info}请访问http://$(get_ip):604"
+		echo -e "${Info}默认宿主机目录/opt/kodcloud"
+		echo -e "\n${Info}按任意键返回主页..."
+		char=`get_char`
+		start_menu_main
+	}
+	start_menu_kodexplorer(){
+		clear
+		echo && echo -e " Kodexplorer一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
+
+—————Kodexplorer管理—————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装Kodexplorer
+ ${Green_font_prefix}2.${Font_color_suffix} 卸载Kodexplorer
+ ${Green_font_prefix}3.${Font_color_suffix} 重启Kodexplorer
+ ${Green_font_prefix}4.${Font_color_suffix} 停止Kodexplorer
+ ${Green_font_prefix}5.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
+—————————————————————————" && echo
+		read -p " 请输入数字 [1-6](默认:6):" num
+		[ -z "${num}" ] && num=6
+		case "$num" in
+			1)
+			install_kodexplorer
+			;;
+			2)
+			cd /opt/kodcloud
+			docker-compose down
+			rm -fr /opt/kodcloud
+			;;
+			3)
+			cd /opt/kodcloud
+			docker-compose restart
+			;;
+			4)
+			cd /opt/kodcloud
+			docker-compose kill
+			;;
+			5)
+			start_menu_main
+			;;
+			6)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}:请输入正确数字 [1-6]"
+			sleep 2s
+			start_menu_kodexplorer
+			;;
+		esac
+	}
+	start_menu_kodexplorer
+}
+
+#安装WordPress
+manage_wordpress(){
+	install_wordpress(){
+		install_docker
+		mkdir -p /opt/wordpress && cd /opt/wordpress
+		rm -f docker-compose.yml
+		wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/wordpress/docker-compose.yml
+		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
+		docker-compose up -d
+		echo -e "\n${Info}首页地址： http://$(get_ip):66"
+		echo -e "${Info}phpMyAdmin地址：http://$(get_ip):605 用户名：root 密码：pangbobi"
+		echo -e "\n${Info}按任意键返回主页..."
+		char=`get_char`
+		start_menu_main
+	}
+	uninstall_wordpress(){
+		cd /opt/wordpress
+		docker-compose down
+		rm -fr /opt/wordpress
+	}
+	restart_wordpress(){
+		cd /opt/wordpress
+		docker-compose restart
+	}
+	stop_wordpress(){
+		cd /opt/wordpress
+		docker-compose kill
+	}
+	start_menu_wordpress(){
+		clear
+		echo && echo -e " WordPress一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
+
+——————WordPress管理——————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装WordPress
+ ${Green_font_prefix}2.${Font_color_suffix} 卸载WordPress
+ ${Green_font_prefix}3.${Font_color_suffix} 重启WordPress
+ ${Green_font_prefix}4.${Font_color_suffix} 停止WordPress
+ ${Green_font_prefix}5.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
+—————————————————————————" && echo
+		read -p " 请输入数字 [1-6](默认:6):" num
+		[ -z "${num}" ] && num=6
+		case "$num" in
+			1)
+			install_wordpress
+			;;
+			2)
+			uninstall_wordpress
+			;;
+			3)
+			restart_wordpress
+			;;
+			4)
+			stop_wordpress
+			;;
+			5)
+			start_menu_main
+			;;
+			6)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}:请输入正确数字 [1-6]"
+			sleep 2s
+			start_menu_wordpress
+			;;
+		esac
+	}
+	start_menu_wordpress
+}
+
+#安装Docker
+manage_docker(){
+	install_seagull(){
+		install_docker
+		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
+		docker run -d -p 10086:10086 -v /var/run/docker.sock:/var/run/docker.sock tobegit3hub/seagull
+		echo -e "\n${Info}首页地址： http://$(get_ip):10086"
+		echo -e "\n${Info}按任意键返回主页..."
+		char=`get_char`
+		start_menu_main
+	}
+	uninstall_docker(){
+		if [[ "${release}" == "centos" ]]; then
+			yum purge docker-engine
+		else
+			apt-get purge docker-engine
+		fi
+	}
+	uninstall_docker_all(){
+		docker stop $(docker ps -a -q)
+		docker rm $(docker ps -a -q)
+		docker rmi -f $(docker images -q)
+		rm -rf /var/lib/docker
+	}
+	start_menu_docker(){
+		clear
+		echo && echo -e " Docker一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
+			
+————————Docker管理———————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装Docker
+ ${Green_font_prefix}2.${Font_color_suffix} 安装海鸥Docker管理器
+ ${Green_font_prefix}3.${Font_color_suffix} 卸载Docker
+ ${Green_font_prefix}4.${Font_color_suffix} 删除所有Docker镜像,容器,卷
+ ${Green_font_prefix}5.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
+—————————————————————————" && echo
+		read -p " 请输入数字 [1-6](默认:6):" num
+		[ -z "${num}" ] && num=6
+		case "$num" in
+			1)
+			install_docker
+			;;
+			2)
+			install_seagull
+			;;
+			3)
+			uninstall_docker
+			;;
+			4)
+			uninstall_docker_all
+			;;
+			5)
+			start_menu_main
+			;;
+			6)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}:请输入正确数字 [1-6]"
+			sleep 2s
+			start_menu_docker
+			;;
+		esac
+	}
+	start_menu_docker
+}
+
 #安装Caddy
 install_caddy(){
 	#!/usr/bin/env bash
 	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 	export PATH
-	#=================================================
-	#       System Required: CentOS/Debian/Ubuntu
-	#       Description: Caddy Install
-	#       Version: 1.0.8
-	#       Author: Toyo
-	#       Blog: https://doub.io/shell-jc1/
-	#=================================================
+
 	file="/usr/local/caddy/"
 	caddy_file="/usr/local/caddy/caddy"
 	caddy_conf_file="/usr/local/caddy/Caddyfile"
 	Info_font_prefix="\033[32m" && Error_font_prefix="\033[31m" && Info_background_prefix="\033[42;37m" && Error_background_prefix="\033[41;37m" && Font_suffix="\033[0m"
 
 	check_installed_status(){
-		[[ ! -e ${caddy_file} ]] && echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy 没有安装，请检查 !" && exit 1
+		[[ ! -e ${caddy_file} ]] && echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy 没有安装，请检查 !" && install_caddy
 	}
 	Download_caddy(){
 		[[ ! -e ${file} ]] && mkdir "${file}"
@@ -2190,99 +3037,8 @@ install_caddy(){
 			chmod +x /etc/init.d/caddy
 			update-rc.d -f caddy defaults
 		fi
-		extension=$2
 	}
-	set_caddy(){
-		#配置Caddy
-		set_caddy_http(){
-			echo && echo -e " Caddy监听一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --"
-			read -p " 请输入你的域名(默认本机IP):" domain
-			[ -z "${domain}" ] && domain=$(get_ip)
-			read -p "请输入监听端口[1-65535],已默认添加80端口" port
-			[ -z "${port}" ] && port=80
-			add_firewall
-			firewall_restart
-			echo "http://$domain {
-root /usr/local/caddy/listenport
-proxy / 127.0.0.1:$port
-timeouts none
-gzip
-}" > /usr/local/caddy/Caddyfile
-			service caddy restart
-			echo -e "${Info}Caddy重启成功!"
-			sleep 2s
-		}
-		set_caddy_https(){
-			echo && echo -e " Caddy监听一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-    -- 胖波比 --"
-			read -p " 请输入你的域名(默认本机IP):" domain
-			[ -z "${domain}" ] && domain=$(get_ip)
-			read -p "请输入监听端口[1-65535],已默认添加443端口" port
-			[ -z "${port}" ] && port=443
-			add_firewall
-			firewall_restart
-			read -p " 请输入你的邮箱:" yemail
-			echo "https://$domain {
-root /usr/local/caddy/listenport
-proxy / 127.0.0.1:$port
-timeouts none
-tls $yemail
-gzip
-}" > /usr/local/caddy/Caddyfile
-			port=80
-			add_firewall
-			port=443
-			add_firewall
-			firewall_restart
-			service caddy restart
-			echo -e "${Info}Caddy重启成功，请手动配置SSR或V2Ray监听端口"
-			sleep 2s
-		}
-		#Caddy设置菜单
-		start_menu_set_caddy(){
-			clear
-			echo && echo -e " Caddy监听一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-			
-————————————伪装方式————————————
- ${Green_font_prefix}1.${Font_color_suffix} HTTP伪装
- ${Green_font_prefix}2.${Font_color_suffix} HTTPS伪装
- ${Green_font_prefix}3.${Font_color_suffix} 回到上级目录
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-
-			echo
-			read -p " 请输入数字 [1-5](默认:5):" num
-			[ -z "${num}" ] && num=5
-			case "$num" in
-				1)
-				set_caddy_http
-				;;
-				2)
-				set_caddy_https
-				;;
-				3)
-				start_menu_caddy
-				;;
-				4)
-				start_menu_main
-				;;
-				5)
-				exit 1
-				;;
-				*)
-				clear
-				echo -e "${Error}:请输入正确数字 [1-5]"
-				sleep 2s
-				start_menu_set_caddy
-				;;
-			esac
-		}
-		start_menu_set_caddy
-	}
-	install_caddy(){
+	caddy_install(){
 		if [[ -e ${caddy_file} ]]; then
 			echo && echo -e "${Error_font_prefix}[信息]${Font_suffix} 检测到 Caddy 已安装，是否继续安装(覆盖更新)？[y/N]"
 			read -e -p "(默认: n):" yn
@@ -2333,55 +3089,159 @@ gzip
 			start_menu_caddy
 		fi
 	}
-	manage_caddy(){
+	#配置Caddy
+	set_caddy_ip(){
 		clear
-		echo && echo -e " Caddy一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-		
-————————————Caddy管理————————————
- ${Green_font_prefix}1.${Font_color_suffix} 配置Caddy
- ${Green_font_prefix}2.${Font_color_suffix} 启动Caddy
- ${Green_font_prefix}3.${Font_color_suffix} 关闭Caddy
- ${Green_font_prefix}4.${Font_color_suffix} 重启Caddy
- ${Green_font_prefix}5.${Font_color_suffix} 查看Caddy状态
- ${Green_font_prefix}6.${Font_color_suffix} 回到主页
- ${Green_font_prefix}7.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-
-		echo
-		read -p " 请输入数字 [1-7](默认:7):" num
-		[ -z "${num}" ] && num=7
-		case "$num" in
-			1)
-			set_caddy
-			;;
-			2)
-			service caddy start
-			;;
-			3)
-			service caddy stop
-			;;
-			4)
-			service caddy restart
-			;;
-			5)
-			service caddy status
-			;;
-			6)
-			start_menu_main
-			;;
-			7)
-			exit 1
-			;;
-			*)
-			clear
-			echo -e "${Error}:请输入正确数字 [1-7]"
-			sleep 2s
-			manage_caddy
-			;;
-		esac
-		manage_caddy
+		port=80
+		add_firewall
+		port=443
+		add_firewall
+		firewall_restart
+		echo "$(get_ip):80 {
+	gzip
+	root /usr/local/caddy/listenport
+}
+$(get_ip):443 {
+	gzip
+	root /usr/local/caddy/listenport
+}" > /usr/local/caddy/Caddyfile
+		service caddy restart
+		echo -e "${Info}Caddy重启成功!"
+		sleep 2s
 	}
+	set_caddy_domain(){
+		clear
+		echo && echo -e " Caddy监听一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --"
+		read -p " 请输入你的域名:" domain
+		read -p " 请输入你的邮箱:" yemail
+		echo "$domain {
+		gzip
+		tls $yemail
+		root /usr/local/caddy/listenport
+		}" > /usr/local/caddy/Caddyfile
+		service caddy restart
+		echo -e "${Info}Caddy重启成功!"
+		sleep 2s
+	}
+	caddy_back(){
+		caddy_back_ip(){
+			clear
+			port=80
+			add_firewall
+			port=443
+			add_firewall
+			firewall_restart
+			read -p " 请输入代理端口[1-65535]:" port
+			echo "$(get_ip):80 {
+	gzip
+	proxy / localhost:$port
+}
+$(get_ip):443 {
+	gzip
+	proxy / localhost:$port
+}" > /usr/local/caddy/Caddyfile
+			service caddy restart
+			echo -e "${Info}Caddy重启成功!"
+			sleep 2s
+		}
+		caddy_back_domain(){
+			clear
+			echo && echo -e " Caddy反向代理一键设置
+	-- 胖波比 --"
+			read -p " 请输入你的域名:" domain
+			read -p " 请输入代理端口[1-65535]:" port
+			read -p " 请输入你的邮箱:" yemail
+			echo "$domain {
+			gzip
+			tls $yemail
+			proxy / localhost:$port
+			}" > /usr/local/caddy/Caddyfile
+			service caddy restart
+			echo -e "${Info}Caddy重启成功!"
+			sleep 2s
+		}
+		caddy_back_menu(){
+			clear
+			echo && echo -e " Caddy反向代理管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
+
+——————————Caddy反向代理—————————
+ ${Green_font_prefix}1.${Font_color_suffix} 使用本机IP
+ ${Green_font_prefix}2.${Font_color_suffix} 使用已解析生效的域名
+ ${Green_font_prefix}3.${Font_color_suffix} 回到Caddy管理页
+ ${Green_font_prefix}4.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
+————————————————————————————————" && echo
+			read -p " 请输入数字 [1-5](默认:5):" num
+			[ -z "${num}" ] && num=5
+			case "$num" in
+				1)
+				caddy_back_ip
+				;;
+				2)
+				caddy_back_domain
+				;;
+				3)
+				manage_caddy
+				;;
+				4)
+				start_menu_main
+				;;
+				5)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-5]"
+				sleep 2s
+				caddy_back_menu
+				;;
+			esac
+			caddy_back_menu
+		}
+		caddy_back_menu
+	}
+	manage_caddy(){
+			clear
+			echo && echo -e " Caddy一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	  -- 胖波比 --
+手动修改配置文件：vi /usr/local/caddy/Caddyfile
+
+————————————Caddy管理———————————
+ ${Green_font_prefix}1.${Font_color_suffix} 使用本机IP
+ ${Green_font_prefix}2.${Font_color_suffix} 使用已解析生效的域名
+ ${Green_font_prefix}3.${Font_color_suffix} 反向代理
+ ${Green_font_prefix}4.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
+————————————————————————————————" && echo
+			read -p " 请输入数字 [1-5](默认:5):" num
+			[ -z "${num}" ] && num=5
+			case "$num" in
+				1)
+				set_caddy_ip
+				;;
+				2)
+				set_caddy_domain
+				;;
+				3)
+				caddy_back
+				;;
+				4)
+				start_menu_main
+				;;
+				5)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-5]"
+				sleep 2s
+				manage_caddy
+				;;
+			esac
+			manage_caddy
+		}
 	#开始菜单
 	start_menu_caddy(){
 		clear
@@ -2390,39 +3250,54 @@ gzip
 		
 ————————————Caddy安装————————————
  ${Green_font_prefix}1.${Font_color_suffix} 安装Caddy
- ${Green_font_prefix}2.${Font_color_suffix} 卸载Caddy
- ${Green_font_prefix}3.${Font_color_suffix} 管理Caddy
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
+ ${Green_font_prefix}2.${Font_color_suffix} 管理Caddy
+ ${Green_font_prefix}3.${Font_color_suffix} 卸载Caddy
+ ${Green_font_prefix}4.${Font_color_suffix} 重启Caddy
+ ${Green_font_prefix}5.${Font_color_suffix} 关闭Caddy
+ ${Green_font_prefix}6.${Font_color_suffix} 启动Caddy
+ ${Green_font_prefix}7.${Font_color_suffix} 查看Caddy状态
+ ${Green_font_prefix}8.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}9.${Font_color_suffix} 退出脚本
 ————————————————————————————————" && echo
-
-		echo
-		read -p " 请输入数字 [1-5](默认:5):" num
-		[ -z "${num}" ] && num=5
+		read -p " 请输入数字 [1-9](默认:9):" num
+		[ -z "${num}" ] && num=9
 		case "$num" in
 			1)
-			install_caddy
+			caddy_install
 			;;
 			2)
-			uninstall_caddy
-			;;
-			3)
 			manage_caddy
 			;;
+			3)
+			uninstall_caddy
+			;;
 			4)
-			start_menu_main
+			service caddy restart
 			;;
 			5)
+			service caddy stop
+			;;
+			6)
+			service caddy start
+			;;
+			7)
+			service caddy status
+			;;
+			8)
+			start_menu_main
+			;;
+			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-5]"
+			echo -e "${Error}:请输入正确数字 [1-9]"
 			sleep 2s
 			start_menu_caddy
 			;;
 		esac
 	}
+	extension=$2
 	start_menu_caddy
 }
 
@@ -2433,44 +3308,43 @@ install_nginx(){
 		PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 		export PATH
 		
-			if [[ "${release}" == "centos" ]]; then
-				 setsebool -P httpd_can_network_connect 1
-					 touch /etc/yum.repos.d/nginx.repo
-cat <<EOF > /etc/yum.repos.d/nginx.repo
+		if [[ "${release}" == "centos" ]]; then
+			setsebool -P httpd_can_network_connect 1
+			touch /etc/yum.repos.d/nginx.repo
+			cat <<EOF > /etc/yum.repos.d/nginx.repo
 [nginx]
 name=nginx repo
 baseurl=http://nginx.org/packages/mainline/centos/7/\$basearch/
 gpgcheck=0
 enabled=1
 EOF
-					 yum -y install nginx
-			elif [[ "${release}" == "debian" ]]; then
-					 echo "deb http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
-					 echo "deb-src http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
-					 wget http://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
-			 apt-key add nginx_signing.key >/dev/null 2>&1
-					 apt-get update
-					 apt-get -y install nginx
-					 rm -rf add nginx_signing.key >/dev/null 2>&1
-			elif [[ "${release}" == "ubuntu" ]]; then
-					 echo "deb http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
-			 echo "deb http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
-					 echo "deb-src http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
-			 echo "deb-src http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
-					 wget -N --no-check-certificate https://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
-			 apt-key add nginx_signing.key >/dev/null 2>&1
-					 apt-get update
-					 apt-get -y install nginx
-					 rm -rf add nginx_signing.key >/dev/null 2>&1
-			fi
-		echo -e "${Info}安装完成！1秒后开启Nginx"
-		sleep 1s
+			yum -y install nginx
+		elif [[ "${release}" == "debian" ]]; then
+			echo "deb http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
+			echo "deb-src http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
+			wget http://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
+			apt-key add nginx_signing.key >/dev/null 2>&1
+			apt-get update
+			apt-get -y install nginx
+			rm -rf add nginx_signing.key >/dev/null 2>&1
+		elif [[ "${release}" == "ubuntu" ]]; then
+			echo "deb http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
+			echo "deb http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
+			echo "deb-src http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
+			echo "deb-src http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
+			wget -N --no-check-certificate https://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
+			apt-key add nginx_signing.key >/dev/null 2>&1
+			apt-get update
+			apt-get -y install nginx
+			rm -rf add nginx_signing.key >/dev/null 2>&1
+		fi
+		echo -e "${Info}安装完成！2秒后开启Nginx"
+		sleep 2s
 		systemctl start nginx.service
-		echo -e "${Info}Nginx已开启！1秒后回到管理页"
-		sleep 1s
+		echo -e "${Info}Nginx已开启！2秒后回到管理页"
+		sleep 2s
 		manage_nginx
 	}
-	
 	#配置Nginx
 	set_nginx(){
 		#配置结尾
@@ -2478,12 +3352,44 @@ EOF
 			echo -e "${Info}修改Nginx配置成功，2秒后重启Nginx"
 			sleep 2s
 			systemctl restart nginx.service
-			echo -e "${Info}Nginx重启成功，1秒后回到配置管理页"
-			sleep 1s
+			echo -e "${Info}Nginx重启成功，2秒后回到配置管理页"
+			sleep 2s
 			set_nginx_menu
+		}
+		#默认配置
+		set_nginx_first(){
+			#设置Nginx网页
+			rm -f /usr/share/nginx/html/index.html
+			echo -e "${Info}正在下载网页。请稍等···"
+			sleep 2s
+			svn checkout "https://github.com/AmuyangA/internet/trunk/html" /usr/share/nginx/html
+			#修改Nginx配置文件
+			echo "server {
+	listen 80;
+	listen 443;
+	server_name  localhost;
+	location / {
+		root /usr/share/nginx/html;
+		index  index.html index.htm;
+	}
+	error_page   500 502 503 504  /50x.html;
+	location = /50x.html {
+		root /usr/share/nginx/html;
+	}
+}" > /etc/nginx/conf.d/default.conf
+			touch /root/test/ng
+			port=80
+			add_firewall
+			port=443
+			add_firewall
+			firewall_restart
+			echo -e "${Info}已默认添加80,443端口"
+			sleep 2s
+			set_nginx_success
 		}
 		#添加监听端口
 		add_nginx(){
+			set_nginx_first
 			cat /etc/nginx/conf.d/default.conf
 			read -p "请输入端口[1-65535],不可重复,(默认:8080):" port
 			[ -z "${port}" ] && port=8080
@@ -2501,73 +3407,78 @@ EOF
 			sed -i '${port} d' /etc/nginx/conf.d/default.conf
 			set_nginx_success
 		}
+		#反向代理
+		nginx_back(){
+			clear
+			echo && echo -e " Nginx反向代理一键设置
+    -- 胖波比 --"
+			read -p " 请输入你的域名(默认本机IP):" domain
+			[ -z "${domain}" ] && domain=$(get_ip)
+			read -p " 请输入代理端口[1-65535]:" port
+			echo "server {
+	listen 80;
+	server_name  $domain;
+	location / {
+		proxy_pass http://$(get_ip):$port;
+	}
+}" > /etc/nginx/conf.d/default.conf
+			set_nginx_success
+		}
 		#配置方式选择
 		set_nginx_menu(){
 			clear
 			echo && echo -e " Nginx配置管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
+	  -- 胖波比 --
+手动修改配置文件：vi /etc/nginx/conf.d/default.conf
 		
 ——————————Nginx配置管理—————————
- ${Green_font_prefix}1.${Font_color_suffix} 添加监听端口(不可添加已占用端口)
- ${Green_font_prefix}2.${Font_color_suffix} 删除监听端口
- ${Green_font_prefix}3.${Font_color_suffix} 回到主页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
+ ${Green_font_prefix}1.${Font_color_suffix} 恢复默认设置
+ ${Green_font_prefix}2.${Font_color_suffix} 添加监听端口(不可添加已占用端口)
+ ${Green_font_prefix}3.${Font_color_suffix} 删除监听端口
+ ${Green_font_prefix}4.${Font_color_suffix} 反向代理
+ ${Green_font_prefix}5.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
 ————————————————————————————————" && echo
-			read -p " 请输入数字 [1-4](默认:4):" num
-			[ -z "${num}" ] && num=4
+			read -p " 请输入数字 [1-6](默认:6):" num
+			[ -z "${num}" ] && num=6
 			case "$num" in
 				1)
-				add_nginx
+				set_nginx_first
 				;;
 				2)
-				delete_nginx
+				add_nginx
 				;;
 				3)
-				start_menu_main
+				delete_nginx
 				;;
 				4)
+				nginx_back
+				;;
+				5)
+				start_menu_main
+				;;
+				6)
 				exit 1
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]"
+				echo -e "${Error}:请输入正确数字 [1-6]"
 				sleep 2s
 				set_nginx_menu
 				;;
 			esac
 		}
-		#默认配置
-		test ! -e /root/testng || set_nginx_menu
-		#设置Nginx网页
-		rm -f /usr/share/nginx/html/index.html
-		echo -e "${Info}正在下载网页。请稍等···"
-		sleep 2s
-		svn checkout "https://github.com/AmuyangA/internet/trunk/html" /usr/share/nginx/html
-		#修改Nginx配置文件
-		echo "server {
-	listen 80;
-	listen 443;
-	server_name  localhost;
-	location / {
-		root /usr/share/nginx/html;
-		index  index.html index.htm;
+		test ! -e /root/test/ng || set_nginx_menu
+		set_nginx_first
 	}
-	error_page   500 502 503 504  /50x.html;
-	location = /50x.html {
-		root /usr/share/nginx/html;
+	nginx_uninstall(){
+		if [[ "${release}" == "centos" ]]; then
+			yum --purge remove nginx
+		else
+			apt-get --purge remove nginx
+		fi
+		rm -f testng
 	}
-}" > /etc/nginx/conf.d/default.conf
-		touch /root/testng
-		port=80
-		add_firewall
-		port=443
-		add_firewall
-		firewall_restart
-		echo -e "${Info}已默认添加80,443端口
-如需手动配置，请修改：/etc/nginx/conf.d/default.conf"
-		set_nginx_success
-	}
-	
 	#Nginx管理
 	manage_nginx(){
 		clear
@@ -2577,15 +3488,16 @@ EOF
 ————————————Nginx管理————————————
  ${Green_font_prefix}1.${Font_color_suffix} 安装Nginx
  ${Green_font_prefix}2.${Font_color_suffix} 配置Nginx
- ${Green_font_prefix}3.${Font_color_suffix} 启动Nginx
- ${Green_font_prefix}4.${Font_color_suffix} 关闭Nginx
- ${Green_font_prefix}5.${Font_color_suffix} 重启Nginx
- ${Green_font_prefix}6.${Font_color_suffix} 查看Nginx状态
- ${Green_font_prefix}7.${Font_color_suffix} 回到主页
- ${Green_font_prefix}8.${Font_color_suffix} 退出脚本
+ ${Green_font_prefix}3.${Font_color_suffix} 卸载Nginx
+ ${Green_font_prefix}4.${Font_color_suffix} 启动Nginx
+ ${Green_font_prefix}5.${Font_color_suffix} 关闭Nginx
+ ${Green_font_prefix}6.${Font_color_suffix} 重启Nginx
+ ${Green_font_prefix}7.${Font_color_suffix} 查看Nginx状态
+ ${Green_font_prefix}8.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}9.${Font_color_suffix} 退出脚本
 ————————————————————————————————" && echo
-		read -p " 请输入数字 [1-8](默认:8):" num
-		[ -z "${num}" ] && num=8
+		read -p " 请输入数字 [1-9](默认:9):" num
+		[ -z "${num}" ] && num=9
 		case "$num" in
 			1)
 			nginx_install
@@ -2594,26 +3506,29 @@ EOF
 			set_nginx
 			;;
 			3)
-			systemctl start nginx.service
+			nginx_uninstall
 			;;
 			4)
-			systemctl stop nginx.service
+			systemctl start nginx.service
 			;;
 			5)
-			systemctl restart nginx.service
+			systemctl stop nginx.service
 			;;
 			6)
-			systemctl status nginx.service
+			systemctl restart nginx.service
 			;;
 			7)
-			start_menu_main
+			systemctl status nginx.service
 			;;
 			8)
+			start_menu_main
+			;;
+			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-8]"
+			echo -e "${Error}:请输入正确数字 [1-9]"
 			sleep 2s
 			manage_nginx
 			;;
@@ -2659,20 +3574,12 @@ set_ssh(){
 	char=`get_char`
 	start_menu_main
  }
- 
+
 #设置Root密码
 set_root(){
 	#!/usr/bin/env bash
 	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 	export PATH
-
-	#=================================================
-	#	System Required: CentOS 6+,Debian7+,Ubuntu12+
-	#	Description: 设置修改root用户登录密码
-	#	Version: 2.0
-	#	Author: 胖波比
-	#	Project: https://github.com/AmuyangA/
-	#=================================================
 
 	github="https://github.com/AmuyangA/internet/"
 	
@@ -2691,7 +3598,7 @@ set_root(){
 		echo "请输入 passwd  命令修改root用户的密码"
 		passwd root
 		# 启用root密码登陆
-		sed -i "s/#PermitRootLogin.*/PermitRootLogin yes/g"   /etc/ssh/sshd_config
+		sed -i "s/PermitRootLogin.*/PermitRootLogin yes/g"   /etc/ssh/sshd_config
 		sed -i "s/PasswordAuthentication.*/PasswordAuthentication yes/g"   /etc/ssh/sshd_config
 		# 重启ssh服务
 		service ssh restart
@@ -2715,8 +3622,6 @@ test_sys(){
  ${Green_font_prefix}3.${Font_color_suffix} 回到主页
  ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 ————————————————————————————————" && echo
-
-		echo
 		wget https://raw.githubusercontent.com/AmuyangA/internet/master/bench/linuxtest.sh && chmod +x linuxtest.sh
 		read -p " 请输入数字 [1-4](默认:4):" num
 		[ -z "${num}" ] && num=4
@@ -2745,16 +3650,6 @@ test_sys(){
 	#ipv4与ipv6测试
 	ibench(){
 		#!/usr/bin/env bash
-		#
-		# Description: Auto test download & I/O speed script
-		#
-		# Copyright (C) 2015 - 2019 Teddysun <i@teddysun.com>
-		#
-		# Thanks: LookBack <admin@dwhd.org>
-		#
-		# URL: https://teddysun.com/444.html
-		#
-
 		if  [ ! -e '/usr/bin/wget' ]; then
 			echo "Error: wget command not found. You must be install wget command at first."
 			exit 1
@@ -2899,16 +3794,6 @@ test_sys(){
 	#国内各地检测
 	cbench(){
 		#!/usr/bin/env bash
-		#
-		# Description: Auto system info & I/O test & network to China script
-		#
-		# Copyright (C) 2017 - 2018 Oldking <oooldking@gmail.com>
-		#
-		# Thanks: Bench.sh <i@teddysun.com>
-		#
-		# URL: https://www.oldking.net/350.html
-		#
-
 		# Colors
 		RED='\033[0;31m'
 		GREEN='\033[0;32m'
@@ -3639,7 +4524,7 @@ test_sys(){
 	start_menu_bench(){
 		clear
 		echo && echo -e " 系统性能一键测试脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-		  -- 胖波比 --
+	-- 胖波比 --
 		
 ————————————性能测试————————————
  ${Green_font_prefix}1.${Font_color_suffix} 执行推荐的测试
@@ -3685,14 +4570,6 @@ reinstall_sys(){
 	#!/usr/bin/env bash
 	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 	export PATH
-
-	#=================================================
-	#	System Required: CentOS 6/7,Debian 8/9,Ubuntu 16+
-	#	Description: 一键重装系统
-	#	Version: 1.0.1
-	#	Author: 千影,Vicer
-	#	Blog: https://www.94ish.me/
-	#=================================================
 
 	github="raw.githubusercontent.com/chiakge/installNET/master"
 
@@ -4018,6 +4895,8 @@ set_firewall(){
 			firewall-cmd --permanent --zone=public --add-port=1-65535/tcp > /dev/null 2>&1
 			firewall-cmd --permanent --zone=public --add-port=1-65535/udp > /dev/null 2>&1
 		else
+			iptables -F
+			iptables -X
 			iptables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
 			iptables -I INPUT -p udp --dport 1:65535 -j ACCEPT
 			ip6tables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
@@ -4027,23 +4906,16 @@ set_firewall(){
 	}
 	delete_firewall_all(){
 		echo -e "${Info}开始设置防火墙..."
-		ssh_port=`grep ^Port /etc/ssh/sshd_config | awk '{print $2}'`
 		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
 			firewall-cmd --get-active-zones
 			firewall-cmd --permanent --zone=public --remove-port=1-65535/tcp > /dev/null 2>&1
 			firewall-cmd --permanent --zone=public --remove-port=1-65535/udp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=${ssh_port}/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=${ssh_port}/udp > /dev/null 2>&1
 		else
-			iptables -I INPUT -p tcp --dport 1:65535 -j DROP
-			iptables -I INPUT -p udp --dport 1:65535 -j DROP
-			ip6tables -I INPUT -p tcp --dport 1:65535 -j DROP
-			ip6tables -I INPUT -p udp --dport 1:65535 -j DROP
-			iptables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
-			iptables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
-			ip6tables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
-			ip6tables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
+			iptables -P INPUT ACCEPT
+			iptables -F
+			iptables -X
 		fi
+		add_firewall_base
 		firewall_restart
 	}
 	clear
@@ -4090,562 +4962,6 @@ set_firewall(){
 	set_firewall
 }
 
-#安装宝塔面板
-install_btpanel(){
-	#!/bin/bash
-	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-	export PATH
-	LANG=en_US.UTF-8
-
-	Red_Error(){
-		echo '=================================================';
-		printf '\033[1;31;40m%b\033[0m\n' "$1";
-		exit 0;
-	}
-
-	is64bit=$(getconf LONG_BIT)
-	if [ "${is64bit}" != '64' ];then
-		Red_Error "抱歉, 6.0不支持32位系统, 请使用64位系统或安装宝塔5.9!";
-	fi
-	isPy26=$(python -V 2>&1|grep '2.6.')
-	if [ "${isPy26}" ];then
-		Red_Error "抱歉, 6.0不支持Centos6.x,请安装Centos7或安装宝塔5.9";
-	fi
-	Install_Check(){
-		while [ "$yes" != 'yes' ] && [ "$yes" != 'n' ]
-		do
-			echo -e "----------------------------------------------------"
-			echo -e "已有Web环境，安装宝塔可能影响现有站点"
-			echo -e "Web service is alreday installed,Can't install panel"
-			echo -e "----------------------------------------------------"
-			read -p "输入yes强制安装/Enter yes to force installation (yes/n): " yes;
-		done 
-		if [ "$yes" == 'n' ];then
-			exit;
-		fi
-	}
-	System_Check(){
-		for serviceS in nginx httpd mysqld
-		do
-			if [ -f "/etc/init.d/${serviceS}" ]; then
-				if [ "${serviceS}" = "httpd" ]; then
-					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/apache)
-				elif [ "${serviceS}" = "mysqld" ]; then
-					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/mysql)
-				else
-					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/${serviceS})
-				fi
-				[ -z "${serviceCheck}" ] && Install_Check
-			fi
-		done
-	}
-
-	Auto_Swap()
-	{
-		swap=$(free |grep Swap|awk '{print $2}')
-		if [ ${swap} -gt 1 ];then
-			echo "Swap total sizse: $swap";
-			return;
-		fi
-		if [ ! -d /www ];then
-			mkdir /www
-		fi
-		swapFile="/www/swap"
-		dd if=/dev/zero of=$swapFile bs=1M count=1025
-		mkswap -f $swapFile
-		swapon $swapFile
-		echo "$swapFile    swap    swap    defaults    0 0" >> /etc/fstab
-		swap=`free |grep Swap|awk '{print $2}'`
-		if [ $swap -gt 1 ];then
-			echo "Swap total sizse: $swap";
-			return;
-		fi
-		
-		sed -i "/\/www\/swap/d" /etc/fstab
-		rm -f $swapFile
-	}
-
-	Service_Add(){
-		if [ "${PM}" == "yum" ] || [ "${PM}" == "dnf" ]; then
-			chkconfig --add bt
-			chkconfig --level 2345 bt on
-		elif [ "${PM}" == "apt-get" ]; then
-			update-rc.d bt defaults
-		fi 
-	}
-
-	get_node_url(){
-		echo '---------------------------------------------';
-		echo "Selected download node...";
-		nodes=(http://183.235.223.101:3389 http://119.188.210.21:5880 http://125.88.182.172:5880 http://103.224.251.67 http://45.32.116.160 http://download.bt.cn);
-		i=1;
-		if [ ! -f /bin/curl ];then
-			if [ "${PM}" = "yum" ]; then
-				yum install curl -y
-			elif [ "${PM}" = "apt-get" ]; then
-				apt-get install curl -y
-			fi
-		fi
-		for node in ${nodes[@]};
-		do
-			start=`date +%s.%N`
-			result=`curl -sS --connect-timeout 3 -m 60 $node/check.txt`
-			if [ $result = 'True' ];then
-				end=`date +%s.%N`
-				start_s=`echo $start | cut -d '.' -f 1`
-				start_ns=`echo $start | cut -d '.' -f 2`
-				end_s=`echo $end | cut -d '.' -f 1`
-				end_ns=`echo $end | cut -d '.' -f 2`
-				time_micro=$(( (10#$end_s-10#$start_s)*1000000 + (10#$end_ns/1000 - 10#$start_ns/1000) ))
-				time_ms=$(($time_micro/1000))
-				values[$i]=$time_ms;
-				urls[$time_ms]=$node
-				i=$(($i+1))
-			fi
-		done
-		j=5000
-		for n in ${values[@]};
-		do
-			if [ $j -gt $n ];then
-				j=$n
-			fi
-		done
-		if [ $j = 5000 ];then
-			NODE_URL='http://download.bt.cn';
-		else
-			NODE_URL=${urls[$j]}
-		fi
-		download_Url=$NODE_URL
-		echo "Download node: $download_Url";
-		echo '---------------------------------------------';
-	}
-	Install_RPM_Pack(){
-		yumPath=/etc/yum.conf
-		isExc=`cat $yumPath|grep httpd`
-		if [ "$isExc" = "" ];then
-			echo "exclude=httpd nginx php mysql mairadb python-psutil python2-psutil" >> $yumPath
-		fi
-
-		yum install ntp -y
-		rm -rf /etc/localtime
-		ln -s /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-
-		#尝试同步时间(从bt.cn)
-		echo 'Synchronizing system time...'
-		getBtTime=$(curl -sS --connect-timeout 3 -m 60 http://www.bt.cn/api/index/get_time)
-		if [ "${getBtTime}" ];then	
-			date -s "$(date -d @$getBtTime +"%Y-%m-%d %H:%M:%S")"
-		fi
-
-		#尝试同步国际时间(从ntp服务器)
-		ntpdate 0.asia.pool.ntp.org
-		setenforce 0
-		startTime=`date +%s`
-		sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
-		yumPacks="wget python-devel python-imaging zip unzip openssl openssl-devel gcc libxml2 libxml2-devel libxslt* zlib zlib-devel libjpeg-devel libpng-devel libwebp libwebp-devel freetype freetype-devel lsof pcre pcre-devel vixie-cron crontabs icu libicu-devel c-ares"
-		yum install -y ${yumPacks}
-
-		for yumPack in ${yumPacks}
-		do
-			rpmPack=$(rpm -q ${yumPack})
-			packCheck=$(echo ${rpmPack}|grep not)
-			if [ "${packCheck}" ]; then
-				yum install ${yumPack} -y
-			fi
-		done
-
-		if [ -f "/usr/bin/dnf" ]; then
-			dnf install -y redhat-rpm-config
-		fi
-		yum install python-devel -y
-	}
-	Install_Deb_Pack(){
-		ln -sf bash /bin/sh
-		apt-get update -y
-		apt-get install ruby -y
-		apt-get install lsb-release -y
-		#apt-get install ntp ntpdate -y
-		#/etc/init.d/ntp stop
-		#update-rc.d ntp remove
-		#cat >>~/.profile<<EOF
-		#TZ='Asia/Shanghai'; export TZ
-		#EOF
-		#rm -rf /etc/localtime
-		#cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-		#echo 'Synchronizing system time...'
-		#ntpdate 0.asia.pool.ntp.org
-		#apt-get upgrade -y
-		for pace in wget curl python python-dev python-imaging zip unzip openssl libssl-dev gcc libxml2 libxml2-dev libxslt zlib1g zlib1g-dev libjpeg-dev libpng-dev lsof libpcre3 libpcre3-dev cron;
-		do apt-get -y install $pace --force-yes; done
-		apt-get -y install python-dev
-
-		tmp=$(python -V 2>&1|awk '{print $2}')
-		pVersion=${tmp:0:3}
-		if [ "${pVersion}" == '2.7' ];then
-			apt-get -y install python2.7-dev
-		fi
-	}
-	Install_Bt(){
-		setup_path="/www"
-		read -p "请输入宝塔面板登录端口(默认:1314):" panelPort
-		[ -z "${panelPort}" ] && panelPort=1314
-		if [ -f ${setup_path}/server/panel/data/port.pl ];then
-			panelPort=$(cat ${setup_path}/server/panel/data/port.pl)
-		fi
-		mkdir -p ${setup_path}/server/panel/logs
-		mkdir -p ${setup_path}/server/panel/vhost/apache
-		mkdir -p ${setup_path}/server/panel/vhost/nginx
-		mkdir -p ${setup_path}/server/panel/vhost/rewrite
-		mkdir -p /www/server
-		mkdir -p /www/wwwroot
-		mkdir -p /www/wwwlogs
-		mkdir -p /www/backup/database
-		mkdir -p /www/backup/site
-
-		if [ ! -f "/usr/bin/unzip" ]; then
-			if [ "${PM}" = "yum" ]; then
-				yum install unzip -y
-			elif [ "${PM}" = "apt-get" ]; then
-				apt-get install unzip -y
-			fi
-		fi
-
-		if [ -f "/etc/init.d/bt" ]; then
-			/etc/init.d/bt stop
-			sleep 1
-		fi
-
-		wget -O panel.zip ${download_Url}/install/src/panel6.zip -T 10
-		wget -O /etc/init.d/bt ${download_Url}/install/src/bt6.init -T 10
-
-		if [ -f "${setup_path}/server/panel/data/default.db" ];then
-			if [ -d "/${setup_path}/server/panel/old_data" ];then
-				rm -rf ${setup_path}/server/panel/old_data
-			fi
-			mkdir -p ${setup_path}/server/panel/old_data
-			mv -f ${setup_path}/server/panel/data/default.db ${setup_path}/server/panel/old_data/default.db
-			mv -f ${setup_path}/server/panel/data/system.db ${setup_path}/server/panel/old_data/system.db
-			mv -f ${setup_path}/server/panel/data/port.pl ${setup_path}/server/panel/old_data/port.pl
-			mv -f ${setup_path}/server/panel/data/admin_path.pl ${setup_path}/server/panel/old_data/admin_path.pl
-		fi
-
-		unzip -o panel.zip -d ${setup_path}/server/ > /dev/null
-
-		if [ -d "${setup_path}/server/panel/old_data" ];then
-			mv -f ${setup_path}/server/panel/old_data/default.db ${setup_path}/server/panel/data/default.db
-			mv -f ${setup_path}/server/panel/old_data/system.db ${setup_path}/server/panel/data/system.db
-			mv -f ${setup_path}/server/panel/old_data/port.pl ${setup_path}/server/panel/data/port.pl
-			mv -f ${setup_path}/server/panel/old_data/admin_path.pl ${setup_path}/server/panel/data/admin_path.pl
-			if [ -d "/${setup_path}/server/panel/old_data" ];then
-				rm -rf ${setup_path}/server/panel/old_data
-			fi
-		fi
-
-		rm -f panel.zip
-
-		if [ ! -f ${setup_path}/server/panel/tools.py ];then
-			Red_Error "ERROR: Failed to download, please try install again!"
-		fi
-
-		rm -f ${setup_path}/server/panel/class/*.pyc
-		rm -f ${setup_path}/server/panel/*.pyc
-
-		chmod +x /etc/init.d/bt
-		chmod -R 600 ${setup_path}/server/panel
-		chmod -R +x ${setup_path}/server/panel/script
-		ln -sf /etc/init.d/bt /usr/bin/bt
-		echo "${panelPort}" > ${setup_path}/server/panel/data/port.pl
-	}
-	Install_Pip(){
-		isPip=$(pip -V|grep python)
-		if [ -z "${isPip}" ];then
-			wget -O get-pip.py ${download_Url}/src/get-pip.py
-			python get-pip.py
-			rm -f get-pip.py
-			isPip=$(pip -V|grep python)
-			if [ -z "${isPip}" ];then
-				if [ "${PM}" = "yum" ]; then
-					yum install python-pip -y
-				elif [ "${PM}" = "apt-get" ]; then
-					apt-get install python-pip -y
-				fi
-			fi
-		fi
-	}
-	Install_Pillow()
-	{
-		isSetup=$(python -m PIL 2>&1|grep package)
-		if [ "$isSetup" = "" ];then
-			isFedora = `cat /etc/redhat-release |grep Fedora`
-			if [ "${isFedora}" ];then
-				pip install Pillow
-				return;
-			fi
-			wget -O Pillow-3.2.0.zip $download_Url/install/src/Pillow-3.2.0.zip -T 10
-			unzip Pillow-3.2.0.zip
-			rm -f Pillow-3.2.0.zip
-			cd Pillow-3.2.0
-			python setup.py install
-			cd ..
-			rm -rf Pillow-3.2.0
-		fi
-		
-		isSetup=$(python -m PIL 2>&1|grep package)
-		if [ -z "${isSetup}" ];then
-			Red_Error "Pillow installation failed."
-		fi
-	}
-	Install_psutil()
-	{
-		isSetup=`python -m psutil 2>&1|grep package`
-		if [ "$isSetup" = "" ];then
-			wget -O psutil-5.2.2.tar.gz $download_Url/install/src/psutil-5.2.2.tar.gz -T 10
-			tar xvf psutil-5.2.2.tar.gz
-			rm -f psutil-5.2.2.tar.gz
-			cd psutil-5.2.2
-			python setup.py install
-			cd ..
-			rm -rf psutil-5.2.2
-		fi
-		isSetup=$(python -m psutil 2>&1|grep package)
-		if [ "${isSetup}" = "" ];then
-			Red_Error "Psutil installation failed."
-		fi
-	}
-	Install_chardet()
-	{
-		isSetup=$(python -m chardet 2>&1|grep package)
-		if [ "${isSetup}" = "" ];then
-			wget -O chardet-2.3.0.tar.gz $download_Url/install/src/chardet-2.3.0.tar.gz -T 10
-			tar xvf chardet-2.3.0.tar.gz
-			rm -f chardet-2.3.0.tar.gz
-			cd chardet-2.3.0
-			python setup.py install
-			cd ..
-			rm -rf chardet-2.3.0
-		fi	
-		
-		isSetup=$(python -m chardet 2>&1|grep package)
-		if [ -z "${isSetup}" ];then
-			Red_Error "chardet installation failed."
-		fi
-	}
-	Install_Python_Lib(){
-		isPsutil=$(python -m psutil 2>&1|grep package)
-		if [ "${isPsutil}" ];then
-			PSUTIL_VERSION=`python -c 'import psutil;print psutil.__version__;' |grep '5.'` 
-			if [ -z "${PSUTIL_VERSION}" ];then
-				pip uninstall psutil -y 
-			fi
-		fi
-
-		if [ "${PM}" = "yum" ]; then
-			yum install libffi-devel -y
-		elif [ "${PM}" = "apt-get" ]; then
-			apt install libffi-dev -y
-		fi
-
-		curl -Ss --connect-timeout 3 -m 60 http://download.bt.cn/install/pip_select.sh|bash
-		pip install --upgrade setuptools 
-		pip install -r ${setup_path}/server/panel/requirements.txt
-		isGevent=$(pip list|grep gevent)
-		if [ "$isGevent" = "" ];then
-			if [ "${PM}" = "yum" ]; then
-				yum install python-gevent -y
-			elif [ "${PM}" = "apt-get" ]; then
-				apt-get install python-gevent -y
-			fi
-		fi
-		pip install psutil chardet virtualenv Flask Flask-Session Flask-SocketIO flask-sqlalchemy Pillow gunicorn gevent-websocket paramiko
-		
-		Install_Pillow
-		Install_psutil
-		Install_chardet
-		pip install gunicorn
-
-	}
-
-	Set_Bt_Panel(){
-		password=$(cat /dev/urandom | head -n 16 | md5sum | head -c 8)
-		sleep 1
-		admin_auth="/www/server/panel/data/admin_path.pl"
-		if [ ! -f ${admin_auth} ];then
-			auth_path=$(cat /dev/urandom | head -n 16 | md5sum | head -c 8)
-			echo "/${auth_path}" > ${admin_auth}
-		fi
-		auth_path=$(cat ${admin_auth})
-		cd ${setup_path}/server/panel/
-		/etc/init.d/bt start
-		python -m py_compile tools.py
-		python tools.py username
-		username=$(python tools.py panel ${password})
-		cd ~
-		echo "${password}" > ${setup_path}/server/panel/default.pl
-		chmod 600 ${setup_path}/server/panel/default.pl
-		/etc/init.d/bt restart
-		sleep 3
-		isStart=$(ps aux |grep 'gunicorn'|grep -v grep|awk '{print $2}')
-		if [ -z "${isStart}" ];then
-			Red_Error "ERROR: The BT-Panel service startup failed."
-		fi
-	}
-	Set_Firewall(){
-		sshPort=$(cat /etc/ssh/sshd_config | grep 'Port '|awk '{print $2}')
-		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-			systemctl enable firewalld
-			systemctl start firewalld
-			firewall-cmd --set-default-zone=public > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=20/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=21/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=22/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=80/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=888/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=${panelPort}/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=${sshPort}/tcp > /dev/null 2>&1
-			#firewall-cmd --permanent --zone=public --add-port=39000-40000/tcp > /dev/null 2>&1
-			firewall-cmd --reload
-		else
-			iptables -I INPUT -p tcp --dport 20 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 21 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 22 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 888 -j ACCEPT
-			iptables -I INPUT -p tcp --dport ${panelPort} -j ACCEPT
-			iptables -I INPUT -p tcp --dport ${sshPort} -j ACCEPT
-			#iptables -I INPUT -p tcp --dport 39000:40000 -j ACCEPT
-			if [[ ${release} == "centos" ]]; then
-				service iptables save
-				service ip6tables save
-			else
-				iptables-save > /etc/iptables.up.rules
-				ip6tables-save > /etc/ip6tables.up.rules
-			fi
-		fi
-	}
-	Get_Ip_Address(){
-		getIpAddress=""
-		getIpAddress=$(curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/getIpAddress)
-		if [ -z "${getIpAddress}" ] || [ "${getIpAddress}" = "0.0.0.0" ]; then
-			isHosts=$(cat /etc/hosts|grep 'www.bt.cn')
-			if [ -z "${isHosts}" ];then
-				echo "" >> /etc/hosts
-				echo "103.224.251.67 www.bt.cn" >> /etc/hosts
-				getIpAddress=$(curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/getIpAddress)
-				if [ -z "${getIpAddress}" ];then
-					sed -i "/bt.cn/d" /etc/hosts
-				fi
-			fi
-		fi
-
-		ipv4Check=$(python -c "import re; print(re.match('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$','${getIpAddress}'))")
-		if [ "${ipv4Check}" == "None" ];then
-			ipv6Address=$(echo ${getIpAddress}|tr -d "[]")
-			ipv6Check=$(python -c "import re; print(re.match('^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$','${ipv6Address}'))")
-			if [ "${ipv6Check}" == "None" ]; then
-				getIpAddress="SERVER_IP"
-			else
-				echo "True" > ${setup_path}/server/panel/data/ipv6.pl
-				sleep 1
-				/etc/init.d/bt restart
-			fi
-		fi
-
-		if [ "${getIpAddress}" != "SERVER_IP" ];then
-			echo "${getIpAddress}" > ${setup_path}/server/panel/data/iplist.txt
-		fi
-	}
-	Setup_Count(){
-		curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/SetupCount?type=Linux\&o=$1 > /dev/null 2>&1
-		if [ "$1" != "" ];then
-			echo $1 > /www/server/panel/data/o.pl
-			cd /www/server/panel
-			python tools.py o
-		fi
-		echo /www > /var/bt_setupPath.conf
-	}
-
-	Install_Main(){
-		System_Check
-		get_node_url
-
-		Auto_Swap
-
-		startTime=`date +%s`
-		if [ "${PM}" = "yum" ]; then
-			Install_RPM_Pack
-		elif [ "${PM}" = "apt-get" ]; then
-			Install_Deb_Pack
-		fi
-
-		Install_Bt
-
-		Install_Pip
-		Install_Python_Lib
-
-		Set_Bt_Panel
-		Service_Add
-		Set_Firewall
-
-		Get_Ip_Address
-		Setup_Count
-	}
-
-	echo "
-	+----------------------------------------------------------------------
-	| Bt-WebPanel 6.0 FOR CentOS/Ubuntu/Debian
-	+----------------------------------------------------------------------
-	| Copyright © 2015-2099 BT-SOFT(http://www.bt.cn) All rights reserved.
-	+----------------------------------------------------------------------
-	| The WebPanel URL will be http://SERVER_IP:1314 when installed.
-	+----------------------------------------------------------------------
-	"
-	while [ "$go" != 'y' ] && [ "$go" != 'n' ]
-	do
-		read -p "Do you want to install Bt-Panel to the $setup_path directory now?(y/n): " go;
-	done
-
-	if [ "$go" == 'n' ];then
-		exit;
-	fi
-
-	Install_Main
-
-	echo -e "=================================================================="
-	echo -e "\033[32mCongratulations! Installed successfully!\033[0m"
-	echo -e "=================================================================="
-	echo  "Bt-Panel: http://${getIpAddress}:${panelPort}$auth_path"
-	echo -e "username: $username"
-	echo -e "password: $password"
-	echo -e "\033[33mWarning:\033[0m"
-	echo -e "\033[33mIf you cannot access the panel, \033[0m"
-	echo -e "\033[33mrelease the following port (1314|888|80|443|20|21) in the security group\033[0m"
-	echo -e "=================================================================="
-
-	endTime=`date +%s`
-	((outTime=($endTime-$startTime)/60))
-	echo -e "Time consumed:\033[32m $outTime \033[0mMinute!"
-	echo -e "${Info}请务必及时记录登录信息!"
-	echo -e "\n${Info}按任意键返回主页..."
-	char=`get_char`
-	start_menu_main
-}
-
-#安装Kodexplorer
-install_kodexplorer(){
-    install_docker
-	read -p "请输入访问端口[1-65535](默认:999):" port
-	[ -z "${port}" ] && port=999
-	add_firewall
-	firewall_restart
-    docker run -d -p ${port}:80 --name kodexplorer -v /opt/kodcloud:/code baiyuetribe/kodexplorer
-	echo -e "${Info}已安装完成!"
-	echo -e "${Info}请访问http://$(get_ip):${port}"
-    echo -e "${Info}默认宿主机目录/opt/kodcloud"
-	echo -e "\n${Info}按任意键返回主页..."
-	char=`get_char`
-	start_menu_main
-}
-
 #更新脚本
 update_sv(){
 	github="raw.githubusercontent.com/AmuyangA/internet/master/supervpn"
@@ -4658,58 +4974,56 @@ update_sv(){
 		[[ -z "${yn}" ]] && yn="y"
 		if [[ ${yn} == [Yy] ]]; then
 			wget -N --no-check-certificate http://${github}/sv.sh && chmod +x sv.sh
-			echo -e "${Info}脚本已更新为最新版本[ ${sh_new_ver} ] !"
-			echo -e "${Info}旧版本已被覆盖,下次启动将运行最新版！"
+			exec ./sv.sh
 		else
 			echo && echo "${Info}已取消..." && echo
 		fi
 	else
 		echo -e "${Info}当前已是最新版本[ ${sh_new_ver} ] !"
-		sleep 2s
 	fi
+	sleep 2s
 }
 
 #开始菜单
 start_menu_main(){
 	clear
-	echo "###################################################"
-	echo "#  SuperVpn----One click Install                  #"
-	echo "#  Author: Pangbobi                               #"
-	echo "#  Github: https://github.com/AmuyangA/internet/  #"
-	echo "###################################################"
 	echo -e "
-  超级VPN 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+   超级VPN一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
 	  -- 胖波比 --
 	执行脚本：./sv.sh
-  终止正在进行的操作：Ctrl+C
+   终止正在进行的操作：Ctrl+C
 	  
 —————————————VPN搭建——————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装V2Ray
+ ${Green_font_prefix}1.${Font_color_suffix} V2Ray安装管理
  ${Green_font_prefix}2.${Font_color_suffix} SSR安装管理
  ${Green_font_prefix}3.${Font_color_suffix} BBR/Lotserver安装管理
- ${Green_font_prefix}4.${Font_color_suffix} 一键安装SS-Panel/Kodexplorer
+—————————————控制面板—————————————
+ ${Green_font_prefix}4.${Font_color_suffix} 安装宝塔面板
+ ${Green_font_prefix}5.${Font_color_suffix} ZFAKA安装管理
+ ${Green_font_prefix}6.${Font_color_suffix} SS-Panel安装管理
+ ${Green_font_prefix}7.${Font_color_suffix} Kodexplorer安装管理
+ ${Green_font_prefix}8.${Font_color_suffix} WordPress安装管理
+ ${Green_font_prefix}9.${Font_color_suffix} Docker安装管理
 ———————————设置伪装(二选一)———————
- ${Green_font_prefix}5.${Font_color_suffix} Caddy安装管理
- ${Green_font_prefix}6.${Font_color_suffix} Nginx安装管理(推荐)
+ ${Green_font_prefix}10.${Font_color_suffix} Caddy安装管理
+ ${Green_font_prefix}11.${Font_color_suffix} Nginx安装管理
 —————————————系统设置—————————————
- ${Green_font_prefix}7.${Font_color_suffix} 设置SSH端口
- ${Green_font_prefix}8.${Font_color_suffix} 设置root密码
- ${Green_font_prefix}9.${Font_color_suffix} 系统性能测试
- ${Green_font_prefix}10.${Font_color_suffix} 重装VPS系统
- ${Green_font_prefix}11.${Font_color_suffix} 设置防火墙
- ${Green_font_prefix}12.${Font_color_suffix} 安装宝塔面板
- ${Green_font_prefix}13.${Font_color_suffix} Kodexplorer安装管理
+ ${Green_font_prefix}12.${Font_color_suffix} 设置SSH端口
+ ${Green_font_prefix}13.${Font_color_suffix} 设置root密码
+ ${Green_font_prefix}14.${Font_color_suffix} 系统性能测试
+ ${Green_font_prefix}15.${Font_color_suffix} 重装VPS系统
+ ${Green_font_prefix}16.${Font_color_suffix} 设置防火墙
 —————————————脚本设置—————————————
- ${Green_font_prefix}14.${Font_color_suffix} 设置脚本自启
- ${Green_font_prefix}15.${Font_color_suffix} 关闭脚本自启
- ${Green_font_prefix}16.${Font_color_suffix} 更新脚本
- ${Green_font_prefix}17.${Font_color_suffix} 退出脚本
+ ${Green_font_prefix}17.${Font_color_suffix} 设置脚本自启
+ ${Green_font_prefix}18.${Font_color_suffix} 关闭脚本自启
+ ${Green_font_prefix}19.${Font_color_suffix} 更新脚本
+ ${Green_font_prefix}20.${Font_color_suffix} 退出脚本
 ——————————————————————————————————" && echo
-	read -p " 请输入数字 [1-17](默认:17):" num
-	[ -z "${num}" ] && num=17
+	read -p " 请输入数字 [1-20](默认:20):" num
+	[ -z "${num}" ] && num=20
 	case "$num" in
 		1)
-		install_v2ray
+		manage_v2ray
 		;;
 		2)
 		install_ssr
@@ -4718,50 +5032,59 @@ start_menu_main(){
 		install_bbr
 		;;
 		4)
-		install_sspanel
-		;;
-		5)
-		install_caddy
-		;;
-		6)
-		install_nginx
-		;;
-		7)
-		set_ssh
-		;;
-		8)
-		set_root
-		;;
-		9)
-		test_sys
-		;;
-		10)
-		reinstall_sys
-		;;
-		11)
-		set_firewall
-		;;
-		12)
 		install_btpanel
 		;;
+		5)
+		manage_zfaka
+		;;
+		6)
+		install_sspanel
+		;;
+		7)
+		manage_kodexplorer
+		;;
+		8)
+		manage_wordpress
+		;;
+		9)
+		manage_docker
+		;;
+		10)
+		install_caddy
+		;;
+		11)
+		install_nginx
+		;;
+		12)
+		set_ssh
+		;;
 		13)
-		install_kodexplorer
+		set_root
 		;;
 		14)
-		echo "./sv.sh" >> .bash_profile
+		test_sys
 		;;
 		15)
-		sed -i "/sv.sh/d" .bash_profile
+		reinstall_sys
 		;;
 		16)
-		update_sv
+		set_firewall
 		;;
 		17)
+		echo "./sv.sh" >> .bash_profile
+		;;
+		18)
+		sed -i "/sv.sh/d" .bash_profile
+		;;
+		19)
+		update_sv
+		;;
+		20)
 		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [1-17]:"
+		echo -e "${Error}:请输入正确数字 [1-20]"
 		sleep 2s
 		start_menu_main
 		;;
@@ -4772,21 +5095,17 @@ start_menu_main(){
 check_sys
 [[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error} 本脚本不支持当前系统 ${release} !" && exit 1
 #安装依赖
-test ! -e /root/testde || start_menu_main
+test ! -e /root/test/de || start_menu_main
+add_firewall_base
+firewall_restart
 echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续..."
 char=`get_char`
 if [[ "${release}" == "centos" ]]; then
-	yum install -y python python-devel python-setuptools openssl openssl-devel git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion jq
-elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
-	apt-get -y install python python-dev python-setuptools openssl libssl-dev git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq
-	iptables -A INPUT -p icmp --icmp-type any -j ACCEPT
-	iptables -A INPUT -s localhost -d localhost -j ACCEPT
-	iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-	iptables -P INPUT DROP
-	iptables-save > /etc/iptables.up.rules
-	ip6tables-save > /etc/ip6tables.up.rules
+	yum -y install python python-devel python-setuptools openssl openssl-devel git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq
+else
 	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules\n/sbin/ip6tables-restore < /etc/ip6tables.up.rules' > /etc/network/if-pre-up.d/iptables
 	chmod +x /etc/network/if-pre-up.d/iptables
+	apt-get -y install python python-dev python-setuptools openssl libssl-dev git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq
 fi
-touch /root/testde
+mkdir -p /root/test && touch /root/test/de
 start_menu_main
