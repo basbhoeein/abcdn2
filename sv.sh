@@ -2,7 +2,9 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-sh_ver="6.4.5"
+sh_ver="6.5.1"
+#check root
+[ $(id -u) != "0" ] && { echo "${Error}: 您必须以root用户运行此脚本"; exit 1; }
 
 #颜色信息
 Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m"
@@ -13,9 +15,6 @@ red='\033[0;31m'
 green='\033[0;32m'
 yellow='\033[0;33m'
 plain='\033[0m'
-
-#check root
-[ $(id -u) != "0" ] && { echo "${Error}: 您必须以root用户运行此脚本"; exit 1; }
 
 ######系统检测组件######
 #检查系统
@@ -73,10 +72,8 @@ firewall_restart(){
 	else
 		if [[ ${release} == "centos" ]]; then
 			service iptables save
-			service ip6tables save
 		else
 			iptables-save > /etc/iptables.up.rules
-			ip6tables-save > /etc/ip6tables.up.rules
 		fi
 	fi
 	echo -e "${Info}防火墙设置完成,2秒后进行下一步"
@@ -90,8 +87,6 @@ add_firewall(){
 	else
 		iptables -I INPUT -p tcp --dport ${port} -j ACCEPT
 		iptables -I INPUT -p udp --dport ${port} -j ACCEPT
-		ip6tables -I INPUT -p tcp --dport ${port} -j ACCEPT
-		ip6tables -I INPUT -p udp --dport ${port} -j ACCEPT
 	fi
 }
 add_firewall_base(){
@@ -107,9 +102,19 @@ add_firewall_base(){
 		iptables -P INPUT DROP
 		iptables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
 		iptables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
-		ip6tables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
-		ip6tables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
 	fi
+}
+add_firewall_all(){
+	echo -e "${Info}开始设置防火墙..."
+	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
+		firewall-cmd --get-active-zones
+		firewall-cmd --permanent --zone=public --add-port=1-65535/tcp > /dev/null 2>&1
+		firewall-cmd --permanent --zone=public --add-port=1-65535/udp > /dev/null 2>&1
+	else
+		iptables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
+		iptables -I INPUT -p udp --dport 1:65535 -j ACCEPT
+	fi
+	firewall_restart
 }
 delete_firewall(){
 	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
@@ -119,8 +124,6 @@ delete_firewall(){
 	else
 		iptables -I INPUT -p tcp --dport ${port} -j DROP
 		iptables -I INPUT -p udp --dport ${port} -j DROP
-		ip6tables -I INPUT -p tcp --dport ${port} -j DROP
-		ip6tables -I INPUT -p udp --dport ${port} -j DROP
 	fi
 }
 #安装Docker
@@ -129,6 +132,7 @@ install_docker(){
 	if [ -x "$(command -v docker)" ]; then
 		echo -e "${Info}您的系统已安装docker"
 	else
+		${PM} --fix-broken install
 		echo -e "${Info}开始安装docker..."
 		docker version > /dev/null || curl -fsSL get.docker.com | bash
 		service docker restart
@@ -511,10 +515,6 @@ manage_v2ray(){
 
 #安装SSR
 install_ssr(){
-	#!/usr/bin/env bash
-	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-	export PATH
-
 	clear
 	libsodium_file="libsodium-1.0.17"
 	libsodium_url="https://github.com/jedisct1/libsodium/releases/download/1.0.17/libsodium-1.0.17.tar.gz"
@@ -888,21 +888,25 @@ EOF
 	请记录你的SSR信息"
 			echo -e "
 ————————————胖波比————————————
- ${Green_font_prefix}1.${Font_color_suffix} 回到主页
- ${Green_font_prefix}2.${Font_color_suffix} 退出脚本
+ ${Green_font_prefix}1.${Font_color_suffix} 进入SSR用户管理页
+ ${Green_font_prefix}2.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
 ——————————————————————————————" && echo
-			read -p " 请输入数字 [1-2](默认:2):" num
-			[ -z "${num}" ] && num=2
+			read -p " 请输入数字 [1-3](默认:3):" num
+			[ -z "${num}" ] && num=3
 			case "$num" in
 				1)
-				start_menu_main
+				manage_ssr
 				;;
 				2)
+				start_menu_main
+				;;
+				3)
 				exit 1
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-2]"
+				echo -e "${Error}:请输入正确数字 [1-3]"
 				sleep 2s
 				start_menu_main
 				;;
@@ -1044,7 +1048,7 @@ EOF
 		et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
 		until [[ "${password1}" == "${password}" ]]
 		do
-			sed -i "${et}s/${password1}/${password}/g" /etc/shadowsocks.json
+			sed -i "${et}s#${password1}#${password}#g" /etc/shadowsocks.json
 			get_pp
 			password1=$(cat ppj | grep "${port}:" | awk -F ':' '{print $2}')
 		done
@@ -1100,8 +1104,8 @@ EOF
  ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
  ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
  ——————————————————————" && echo
-			read -p " 请输入数字 [1-3](默认:3)：" num
-			[ -z "${num}" ] && num=3
+			read -p " 请输入数字 [1-3](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
 				1)
 				add_user_single
@@ -1432,10 +1436,6 @@ EOF
 
 #安装BBR或锐速
 install_bbr(){
-	#!/usr/bin/env bash
-	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-	export PATH
-	#Blog: https://www.94ish.me/
 	github="raw.githubusercontent.com/chiakge/Linux-NetSpeed/master"
 	#安装BBR内核
 	installbbr(){
@@ -2074,6 +2074,7 @@ install_btpanel(){
 	if [ "${isPy26}" ];then
 		Red_Error "抱歉, 6.0不支持Centos6.x,请安装Centos7或安装宝塔5.9";
 	fi
+
 	Install_Check(){
 		while [ "$yes" != 'yes' ] && [ "$yes" != 'n' ]
 		do
@@ -2102,9 +2103,7 @@ install_btpanel(){
 			fi
 		done
 	}
-
-	Auto_Swap()
-	{
+	Auto_Swap(){
 		swap=$(free |grep Swap|awk '{print $2}')
 		if [ ${swap} -gt 1 ];then
 			echo "Swap total sizse: $swap";
@@ -2127,7 +2126,6 @@ install_btpanel(){
 		sed -i "/\/www\/swap/d" /etc/fstab
 		rm -f $swapFile
 	}
-
 	Service_Add(){
 		if [ "${PM}" == "yum" ] || [ "${PM}" == "dnf" ]; then
 			chkconfig --add bt
@@ -2335,8 +2333,7 @@ install_btpanel(){
 			fi
 		fi
 	}
-	Install_Pillow()
-	{
+	Install_Pillow(){
 		isSetup=$(python -m PIL 2>&1|grep package)
 		if [ "$isSetup" = "" ];then
 			isFedora = `cat /etc/redhat-release |grep Fedora`
@@ -2358,8 +2355,7 @@ install_btpanel(){
 			Red_Error "Pillow installation failed."
 		fi
 	}
-	Install_psutil()
-	{
+	Install_psutil(){
 		isSetup=`python -m psutil 2>&1|grep package`
 		if [ "$isSetup" = "" ];then
 			wget -O psutil-5.2.2.tar.gz $download_Url/install/src/psutil-5.2.2.tar.gz -T 10
@@ -2375,8 +2371,7 @@ install_btpanel(){
 			Red_Error "Psutil installation failed."
 		fi
 	}
-	Install_chardet()
-	{
+	Install_chardet(){
 		isSetup=$(python -m chardet 2>&1|grep package)
 		if [ "${isSetup}" = "" ];then
 			wget -O chardet-2.3.0.tar.gz $download_Url/install/src/chardet-2.3.0.tar.gz -T 10
@@ -2478,10 +2473,8 @@ install_btpanel(){
 			#iptables -I INPUT -p tcp --dport 39000:40000 -j ACCEPT
 			if [[ ${release} == "centos" ]]; then
 				service iptables save
-				service ip6tables save
 			else
 				iptables-save > /etc/iptables.up.rules
-				ip6tables-save > /etc/ip6tables.up.rules
 			fi
 		fi
 	}
@@ -2670,120 +2663,222 @@ manage_zfaka(){
 }
 
 #安装SSR控制面板
-install_sspanel(){
-	#通知信息
-	sspanel_message(){
-		echo -e "\n搭建成功，现在您可以直接访问了"
-		echo -e "${Info}ss-panel地址：http://$(get_ip):603"   
-		echo -e "源码路径：/code/code"
-		echo -e "网页源文件路径：/opt/sspanel/code"
-		echo -e "数据库存储路径：/opt/sspanel/mysql"
-		echo -e "\n之后执行剩下的相关命令：
-docker exec -it sspanel sh	#进入sspanel容器
-php xcat createAdmin		#创建管理员账户
-php xcat syncusers			#同步用户
-php xcat initQQWry			#下载ip解析库
-php xcat resetTraffic		#重置流量
-php xcat initdownload		#下载客户端安装包
-exit						#退出
-\n执行 crontab -e 命令, 添加以下四条（定时任务配置）：
-30 22 * * * docker exec -t sspanel php xcat sendDiaryMail
-0 0 * * * docker exec -t sspanel php -n xcat dailyjob
-*/1 * * * * docker exec -t sspanel php xcat checkjob
-*/1 * * * * docker exec -t sspanel php xcat syncnode"
-		echo -e "${Info}请务必先记录以上信息！"
-		echo -e "\n${Info}按任意键返回主页..."
-		char=`get_char`
-		start_menu_main
+manage_sspanel(){
+	#安装前端
+	install_sspanel_front(){
+		install_sspanel(){
+			if [ -e /root/test/sp ]; then
+				echo -e "${Info}SS-PANEL已安装"
+			else
+				install_docker
+				echo -e "${Info}正在开始安装SS-PANEL..."
+				mkdir -p /opt/sspanel && cd /opt/sspanel
+				rm -f docker-compose.yml
+				echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
+				wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/ssrpanel/docker-compose.yml
+				sed -i "s/sspanel_type/${sspaneltype}/g" /opt/sspanel/docker-compose.yml
+				docker-compose up -d
+				touch /root/test/sp && touch /root/test/ko
+				if [ -e /root/test/cr ]; then
+					echo -e "${Info}定时任务已添加"
+				else
+					echo -e "${Info}正在添加定时任务..."
+					echo '30 22 * * * docker exec -t sspanel php xcat sendDiaryMail' >> /var/spool/cron/crontabs/root
+					echo '0 0 * * * docker exec -t sspanel php -n xcat dailyjob' >> /var/spool/cron/crontabs/root
+					echo '*/1 * * * * docker exec -t sspanel php xcat checkjob' >> /var/spool/cron/crontabs/root
+					echo '*/1 * * * * docker exec -t sspanel php xcat syncnode' >> /var/spool/cron/crontabs/root
+					echo '0 */20 * * * docker exec -t sspanel php -n xcat backup' >> /var/spool/cron/crontabs/root
+					echo '5 0 * * * docker exec -t sspanel php xcat sendFinanceMail_day' >> /var/spool/cron/crontabs/root
+					echo '6 0 * * 0 docker exec -t sspanel php xcat sendFinanceMail_week' >> /var/spool/cron/crontabs/root
+					echo '7 0 1 * * docker exec -t sspanel php xcat sendFinanceMail_month' >> /var/spool/cron/crontabs/root
+					/etc/init.d/cron restart
+					touch /root/test/cr
+				fi
+				if [ ! -e /root/msp.sh ]; then
+					cd /root && wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/ssrpanel/msp.sh && chmod +x msp.sh
+				fi
+				clear
+				echo -e "\n${Info}网站首页：http://$(get_ip):603"
+				echo -e "${Info}Kodexplorer：http://$(get_ip):604"
+				echo -e "${Info}网站地址：/opt/sspanel/code"
+				echo -e "\n${Info}即将同步数据库并创建管理员账户\n${Info}请输入：./msp.sh"
+				echo -e "${Info}任意键继续..."
+				char=`get_char`
+				exit 1
+			fi
+		}
+		select_sspanel_type(){
+			clear
+			echo -e "\n${Info}SS-PANEL前端只需要安装在面板机！！！
+	-- 胖波比 --
+
+————————————————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装开发版
+ ${Green_font_prefix}2.${Font_color_suffix} 安装稳定版
+ ${Green_font_prefix}3.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本 
+————————————————————————————————" && echo
+			read -p " 请输入数字 [1-4](默认:4):" num
+			[ -z "${num}" ] && num=4
+			case "$num" in
+				1)
+				sspaneltype="dev"
+				install_sspanel
+				;;
+				2)
+				sspaneltype="master"
+				install_sspanel
+				;;
+				3)
+				start_menu_main
+				;;
+				4)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-4]"
+				sleep 2s
+				select_sspanel_type
+				;;
+			esac
+		}
+		select_sspanel_type
 	}
-	#稳定版
-	sspanel_install_a(){
-		install_docker
-		mkdir -p /opt/sspanel && cd /opt/sspanel
-		rm -f docker-compose.yml 
-		wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/ssrpanel/a/docker-compose.yml
-		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
-		docker-compose up -d
-		sspanel_message
-	}
-	#开发版
-	sspanel_install_b(){
-		install_docker
-		mkdir -p /opt/sspanel && cd /opt/sspanel
-		rm -f docker-compose.yml
-		docker rmi -f baiyuetribe/sspanel:dev
-		wget https://raw.githubusercontent.com/AmuyangA/internet/master/panel/ssrpanel/b/docker-compose.yml
-		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
-		docker-compose up -d
-		sspanel_message
-	}
-	#管理面板
-	manage_sspanel(){
-		clear
-		echo -e "
-SS-PANEL_NODE 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	#安装后端
+	install_sspanel_back(){
+		node_database(){
+			read -p " 请输入面板创建的节点序号(例如:3):" nodeid
+			if [ ! -e /root/test/spdb ]; then
+				read -p " 请输入面板机域名或IP(默认本机IP):" mysqldomain
+				[ -z "${mysqldomain}" ] && mysqldomain="127.0.0.1"
+				install_docker
+				docker run -d --name=ssrmu -e NODE_ID=${nodeid} -e API_INTERFACE=glzjinmod -e MYSQL_HOST=${mysqldomain} -e MYSQL_USER=root -e MYSQL_DB=sspanel -e MYSQL_PASS=sspanel --network=host --log-opt max-size=50m --log-opt max-file=3 --restart=always fanvinga/docker-ssrmu
+				add_firewall_all
+				touch /root/test/spdb
+			else
+				echo -e "${Info}暂未完善，等待修复，敬请期待..."
+				sleep 3s
+			fi
+		}
+		node_webapi(){
+			read -p " 请输入面板创建的节点序号(例如:3):" nodeid
+			if [ ! -e /root/test/spwa ]; then
+				read -p " 请输入面板机域名或IP(默认本机IP):" mysqldomain
+				[ -z "${mysqldomain}" ] && mysqldomain="127.0.0.1"
+				mysqldomain="http://${mysqldomain}"
+				install_docker
+				docker run -d --name=ssrmu -e NODE_ID=${nodeid} -e API_INTERFACE=modwebapi -e WEBAPI_URL=${mysqldomain} -e WEBAPI_TOKEN=NimaQu --network=host --log-opt max-size=50m --log-opt max-file=3 --restart=always fanvinga/docker-ssrmu
+				add_firewall_all
+				touch /root/test/spwa
+			else
+				echo -e "${Info}暂未完善，等待修复，敬请期待..."
+				sleep 3s
+			fi
+		}
+		sspanel_db_menu(){
+			clear
+			echo -e "
+SS-PANEL_UIM 后端对接一键脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
 	-- 胖波比 --
 	  
 ————————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装SS-PANEL(稳定版-master分支)
- ${Green_font_prefix}2.${Font_color_suffix} 安装SS-PANEL(开发版-dev分支)
- ${Green_font_prefix}3.${Font_color_suffix} 停止SS-PANEL
- ${Green_font_prefix}4.${Font_color_suffix} 重启SS-PANEL
- ${Green_font_prefix}5.${Font_color_suffix} 卸载SS-PANEL
- ${Green_font_prefix}6.${Font_color_suffix} 回到主页
- ${Green_font_prefix}7.${Font_color_suffix} 退出脚本
+ ${Green_font_prefix}1.${Font_color_suffix} Database对接
+ ${Green_font_prefix}2.${Font_color_suffix} WebApi对接
+ ${Green_font_prefix}3.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 ————————————————————————————————" && echo
-		echo
-		read -p " 请输入数字 [1-7](默认:7):" num
-		[ -z "${num}" ] && num=7
+			read -p " 请输入数字 [1-4](默认:4):" num
+			[ -z "${num}" ] && num=4
+			case "$num" in
+				1)
+				node_database
+				;;
+				2)
+				node_webapi
+				;;
+				3)
+				start_menu_main
+				;;
+				4)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-4]"
+				sleep 2s
+				sspanel_db_menu
+				;;
+			esac
+		}
+		sspanel_db_menu
+	}
+	uninstall_sspanel(){
+		cd /opt/sspanel
+		docker-compose down
+		rm -rf /opt/sspanel && rm -f /root/test/sp && rm -f /root/test/ko
+		rm -f /root/test/spdb && rm -f /root/test/spwa && rm -f /root/test/my
+	}
+	#管理面板
+	sspanel_start_menu(){
+		clear
+		echo -e "
+SS-PANEL_UIM 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
+修改网站配置文件：vi /opt/sspanel/code/config/.config.php
+
+————————————————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装SS-PANEL前端
+ ${Green_font_prefix}2.${Font_color_suffix} 安装SS-PANEL后端
+ ${Green_font_prefix}3.${Font_color_suffix} 卸载SS-PANEL
+ ${Green_font_prefix}4.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
+————————————————————————————————" && echo
+		read -p " 请输入数字 [1-5](默认:5):" num
+		[ -z "${num}" ] && num=5
 		case "$num" in
 			1)
-			sspanel_install_a
+			install_sspanel_front
 			;;
 			2)
-			sspanel_install_b
+			install_sspanel_back
 			;;
 			3)
-			cd /opt/sspanel
-			docker-compose kill
+			uninstall_sspanel
 			;;
 			4)
-			cd /opt/sspanel
-			docker-compose restart
-			;;
-			5)
-			cd /opt/sspanel
-			docker-compose down
-			rm -fr /opt/sspanel
-			;;
-			6)
 			start_menu_main
 			;;
-			7)
+			5)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-6]:"
+			echo -e "${Error}:请输入正确数字 [1-5]"
 			sleep 2s
-			manage_sspanel
+			sspanel_start_menu
 			;;
 		esac
 	}
-	manage_sspanel
+	sspanel_start_menu
 }
 
 #安装Kodexplorer
 manage_kodexplorer(){
 	install_kodexplorer(){
-		install_docker
-		docker run -d -p 604:80 --name kodexplorer -v /opt/kodcloud:/code baiyuetribe/kodexplorer
-		echo -e "\n${Info}已安装完成!"
-		echo -e "${Info}请访问http://$(get_ip):604"
-		echo -e "${Info}默认宿主机目录/opt/kodcloud"
-		echo -e "\n${Info}按任意键返回主页..."
-		char=`get_char`
-		start_menu_main
+		if [ -e /root/test/ko ]; then
+			echo -e "${Info}Kodexplorer已安装!"
+		else
+			install_docker
+			echo -e "${Info}正在安装Kodexplorer..."
+			docker run -d -p 604:80 --name kodexplorer -v /opt/kodcloud:/code baiyuetribe/kodexplorer
+			touch /root/test/ko
+			echo -e "\n${Info}请访问http://$(get_ip):604"
+			echo -e "${Info}默认宿主机目录/opt/kodcloud"
+			echo -e "\n${Info}按任意键返回主页..."
+			char=`get_char`
+			start_menu_main
+		fi
 	}
 	start_menu_kodexplorer(){
 		clear
@@ -2807,7 +2902,8 @@ manage_kodexplorer(){
 			2)
 			cd /opt/kodcloud
 			docker-compose down
-			rm -fr /opt/kodcloud
+			rm -rf /opt/kodcloud
+			rm -f /root/test/ko
 			;;
 			3)
 			cd /opt/kodcloud
@@ -2919,17 +3015,12 @@ manage_docker(){
 		start_menu_main
 	}
 	uninstall_docker(){
-		if [[ "${release}" == "centos" ]]; then
-			yum purge docker-engine
-		else
-			apt-get purge docker-engine
-		fi
+		${PM} --purge docker-engine
 	}
 	uninstall_docker_all(){
 		docker stop $(docker ps -a -q)
 		docker rm $(docker ps -a -q)
 		docker rmi -f $(docker images -q)
-		rm -rf /var/lib/docker
 	}
 	start_menu_docker(){
 		clear
@@ -2978,10 +3069,6 @@ manage_docker(){
 
 #安装Caddy
 install_caddy(){
-	#!/usr/bin/env bash
-	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-	export PATH
-
 	file="/usr/local/caddy/"
 	caddy_file="/usr/local/caddy/caddy"
 	caddy_conf_file="/usr/local/caddy/Caddyfile"
@@ -3304,10 +3391,6 @@ $(get_ip):443 {
 #安装Nginx
 install_nginx(){
 	nginx_install(){
-		#!/usr/bin/env bash
-		PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-		export PATH
-		
 		if [[ "${release}" == "centos" ]]; then
 			setsebool -P httpd_can_network_connect 1
 			touch /etc/yum.repos.d/nginx.repo
@@ -3577,12 +3660,6 @@ set_ssh(){
 
 #设置Root密码
 set_root(){
-	#!/usr/bin/env bash
-	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-	export PATH
-
-	github="https://github.com/AmuyangA/internet/"
-	
 	#一键启用root帐号命令
 	if [[ "${release}" == "centos" ]]; then
 		# 修改root 密码
@@ -3612,6 +3689,7 @@ set_root(){
 test_sys(){
 	#千影大佬的脚本
 	qybench(){
+		wget https://raw.githubusercontent.com/AmuyangA/internet/master/bench/linuxtest.sh && chmod +x linuxtest.sh
 		clear
 		echo && echo -e " 系统性能一键测试综合脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
 	-- 胖波比 --
@@ -3622,7 +3700,6 @@ test_sys(){
  ${Green_font_prefix}3.${Font_color_suffix} 回到主页
  ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 ————————————————————————————————" && echo
-		wget https://raw.githubusercontent.com/AmuyangA/internet/master/bench/linuxtest.sh && chmod +x linuxtest.sh
 		read -p " 请输入数字 [1-4](默认:4):" num
 		[ -z "${num}" ] && num=4
 		case "$num" in
@@ -3649,12 +3726,6 @@ test_sys(){
 	
 	#ipv4与ipv6测试
 	ibench(){
-		#!/usr/bin/env bash
-		if  [ ! -e '/usr/bin/wget' ]; then
-			echo "Error: wget command not found. You must be install wget command at first."
-			exit 1
-		fi
-
 		# Colors
 		RED='\033[0;31m'
 		GREEN='\033[0;32m'
@@ -3793,7 +3864,6 @@ test_sys(){
 	
 	#国内各地检测
 	cbench(){
-		#!/usr/bin/env bash
 		# Colors
 		RED='\033[0;31m'
 		GREEN='\033[0;32m'
@@ -4567,12 +4637,7 @@ test_sys(){
 
 #重装VPS系统
 reinstall_sys(){
-	#!/usr/bin/env bash
-	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-	export PATH
-
 	github="raw.githubusercontent.com/chiakge/installNET/master"
-
 	#安装环境
 	first_job(){
 	if [[ "${release}" == "centos" ]]; then
@@ -4866,10 +4931,6 @@ reinstall_sys(){
 
 #设置防火墙
 set_firewall(){
-	#!/usr/bin/env bash
-	PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
-	export PATH
-	
 	add_firewall_single(){
 		clear
 		until [[ "${port}" -ge "1" && "${port}" -le "65535" ]]
@@ -4886,22 +4947,6 @@ set_firewall(){
 			read -p " 请输入端口号[1-65535]：" port
 		done
 		delete_firewall
-		firewall_restart
-	}
-	add_firewall_all(){
-		echo -e "${Info}开始设置防火墙..."
-		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-			firewall-cmd --get-active-zones
-			firewall-cmd --permanent --zone=public --add-port=1-65535/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=1-65535/udp > /dev/null 2>&1
-		else
-			iptables -F
-			iptables -X
-			iptables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
-			iptables -I INPUT -p udp --dport 1:65535 -j ACCEPT
-			ip6tables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
-			ip6tables -I INPUT -p udp --dport 1:65535 -j ACCEPT
-		fi
 		firewall_restart
 	}
 	delete_firewall_all(){
@@ -5038,7 +5083,7 @@ start_menu_main(){
 		manage_zfaka
 		;;
 		6)
-		install_sspanel
+		manage_sspanel
 		;;
 		7)
 		manage_kodexplorer
@@ -5101,9 +5146,9 @@ firewall_restart
 echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续..."
 char=`get_char`
 if [[ "${release}" == "centos" ]]; then
-	yum -y install python python-devel python-setuptools openssl openssl-devel git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq
+	yum -y install python python-devel python-setuptools openssl openssl-devel git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq epel-release
 else
-	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules\n/sbin/ip6tables-restore < /etc/ip6tables.up.rules' > /etc/network/if-pre-up.d/iptables
+	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules' > /etc/network/if-pre-up.d/iptables
 	chmod +x /etc/network/if-pre-up.d/iptables
 	apt-get -y install python python-dev python-setuptools openssl libssl-dev git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq
 fi
