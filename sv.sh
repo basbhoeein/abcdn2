@@ -2,9 +2,7 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-sh_ver="6.5.1"
-#check root
-[ $(id -u) != "0" ] && { echo "${Error}: 您必须以root用户运行此脚本"; exit 1; }
+sh_ver="6.5.5"
 
 #颜色信息
 Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m"
@@ -15,6 +13,9 @@ red='\033[0;31m'
 green='\033[0;32m'
 yellow='\033[0;33m'
 plain='\033[0m'
+
+#check root
+[ $(id -u) != "0" ] && { echo -e "${Error}: 您必须以root用户运行此脚本"; exit 1; }
 
 ######系统检测组件######
 #检查系统
@@ -76,12 +77,10 @@ firewall_restart(){
 			iptables-save > /etc/iptables.up.rules
 		fi
 	fi
-	echo -e "${Info}防火墙设置完成,2秒后进行下一步"
-	sleep 2s
+	echo -e "${Info}防火墙设置完成！"
 }
 add_firewall(){
 	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-		firewall-cmd --get-active-zones
 		firewall-cmd --permanent --zone=public --add-port=${port}/tcp > /dev/null 2>&1
 		firewall-cmd --permanent --zone=public --add-port=${port}/udp > /dev/null 2>&1
 	else
@@ -92,7 +91,6 @@ add_firewall(){
 add_firewall_base(){
 	ssh_port=$(cat /etc/ssh/sshd_config | grep "Port " | tail -1 | awk -F ' ' '{print $2}')
 	if [[ "${release}" == "centos" ]]; then
-		firewall-cmd --get-active-zones
 		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/tcp > /dev/null 2>&1
 		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/udp > /dev/null 2>&1
 	else
@@ -107,7 +105,6 @@ add_firewall_base(){
 add_firewall_all(){
 	echo -e "${Info}开始设置防火墙..."
 	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-		firewall-cmd --get-active-zones
 		firewall-cmd --permanent --zone=public --add-port=1-65535/tcp > /dev/null 2>&1
 		firewall-cmd --permanent --zone=public --add-port=1-65535/udp > /dev/null 2>&1
 	else
@@ -118,7 +115,6 @@ add_firewall_all(){
 }
 delete_firewall(){
 	if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-		firewall-cmd --get-active-zones
 		firewall-cmd --permanent --zone=public --remove-port=${port}/tcp > /dev/null 2>&1
 		firewall-cmd --permanent --zone=public --remove-port=${port}/udp > /dev/null 2>&1
 	else
@@ -147,257 +143,30 @@ install_docker(){
 		chmod +x /usr/local/bin/docker-compose
 	fi
 }
-	
+
 #安装V2ray
 manage_v2ray(){
-	install_v2ray(){
-		#!/bin/bash
-		# github: https://github.com/Jrohy/multi-v2ray
-
-		#定时任务北京执行时间(0~23)
-		BEIJING_UPDATE_TIME=3
-
-		#记录最开始运行脚本的路径
-		BEGIN_PATH=$(pwd)
-
-		#安装方式, 0为全新安装, 1为保留v2ray配置更新
-		INSTALL_WAY=0
-
-		#定义操作变量, 0为否, 1为是
-		HELP=0
-		REMOVE=0
-		CHINESE=0
-		BASE_SOURCE_PATH="https://raw.githubusercontent.com/Jrohy/multi-v2ray/master"
-		CLEAN_IPTABLES_SHELL="$BASE_SOURCE_PATH/v2ray_util/global_setting/clean_iptables.sh"
-		BASH_COMPLETION_SHELL="$BASE_SOURCE_PATH/v2ray.bash"
-		UTIL_CFG="$BASE_SOURCE_PATH/v2ray_util/util_core/util.cfg"
-		UTIL_PATH="/etc/v2ray_util/util.cfg"
-
-		#Centos 临时取消别名
-		[[ -f /etc/redhat-release && -z $(echo $SHELL|grep zsh) ]] && unalias -a
-		[[ -z $(echo $SHELL|grep zsh) ]] && ENV_FILE=".bashrc" || ENV_FILE=".zshrc"
-
-		#######color code########
-		RED="31m"
-		GREEN="32m"
-		YELLOW="33m"
-		BLUE="36m"
-		FUCHSIA="35m"
-
-		colorEcho(){
-			COLOR=$1
-			echo -e "\033[${COLOR}${@:2}\033[0m"
-		}
-
-		#######get params#########
-		while [[ $# > 0 ]];do
-			key="$1"
-			case $key in
-				--remove)
-				REMOVE=1
-				;;
-				-h|--help)
-				HELP=1
-				;;
-				-k|--keep)
-				INSTALL_WAY=1
-				colorEcho ${BLUE} "keep v2ray profile to update\n"
-				;;
-				--zh)
-				CHINESE=1
-				colorEcho ${BLUE} "安装中文版..\n"
-				;;
-				*)
-						# unknown option
-				;;
-			esac
-			shift # past argument or value
-		done
-		#############################
-
-		help(){
-			echo "bash multi-v2ray.sh [-h|--help] [-k|--keep] [--remove]"
-			echo "  -h, --help           Show help"
-			echo "  -k, --keep           keep the v2ray config.json to update"
-			echo "      --remove         remove v2ray && multi-v2ray"
-			echo "                       no params to new install"
-			return 0
-		}
-
-		closeSELinux() {
-			#禁用SELinux
-			if [ -s /etc/selinux/config ] && grep 'SELINUX=enforcing' /etc/selinux/config; then
-				sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
-				setenforce 0
-			fi
-		}
-
-		checkSys() {
-			#检查是否为Root
-			[ $(id -u) != "0" ] && { colorEcho ${RED} "Error: You must be root to run this script"; exit 1; }
-
-			#检查系统信息
-			if [[ -e /etc/redhat-release ]];then
-				if [[ $(cat /etc/redhat-release | grep Fedora) ]];then
-					OS='Fedora'
-					PACKAGE_MANAGER='dnf'
-				else
-					OS='CentOS'
-					PACKAGE_MANAGER='yum'
-				fi
-			elif [[ $(cat /etc/issue | grep Debian) ]];then
-				OS='Debian'
-				PACKAGE_MANAGER='apt-get'
-			elif [[ $(cat /etc/issue | grep Ubuntu) ]];then
-				OS='Ubuntu'
-				PACKAGE_MANAGER='apt-get'
-			elif [[ $(cat /etc/issue | grep Raspbian) ]];then
-				OS='Raspbian'
-				PACKAGE_MANAGER='apt-get'
-			else
-				colorEcho ${RED} "Not support OS, Please reinstall OS and retry!"
-				exit 1
-			fi
-		}
-
-		#安装依赖
-		installDependent(){
-			if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
-				${PACKAGE_MANAGER} install ntpdate socat crontabs lsof which -y
-			else
-				${PACKAGE_MANAGER} update
-				${PACKAGE_MANAGER} install ntpdate socat cron lsof -y
-			fi
-
-			#install python3 & pip3
-			bash <(curl -sL https://git.io/fhqMz)
-		}
-
-		#设置定时升级任务
-		planUpdate(){
-			if [[ $CHINESE == 1 ]];then
-				#计算北京时间早上3点时VPS的实际时间
-				ORIGIN_TIME_ZONE=$(date -R|awk '{printf"%d",$6}')
-				LOCAL_TIME_ZONE=${ORIGIN_TIME_ZONE%00}
-				BEIJING_ZONE=8
-				DIFF_ZONE=$[$BEIJING_ZONE-$LOCAL_TIME_ZONE]
-				LOCAL_TIME=$[$BEIJING_UPDATE_TIME-$DIFF_ZONE]
-				if [ $LOCAL_TIME -lt 0 ];then
-					LOCAL_TIME=$[24+$LOCAL_TIME]
-				elif [ $LOCAL_TIME -ge 24 ];then
-					LOCAL_TIME=$[$LOCAL_TIME-24]
-				fi
-				colorEcho ${BLUE} "beijing time ${BEIJING_UPDATE_TIME}, VPS time: ${LOCAL_TIME}\n"
-			else
-				LOCAL_TIME=3
-			fi
-			OLD_CRONTAB=$(crontab -l)
-			echo "SHELL=/bin/bash" >> crontab.txt
-			echo "${OLD_CRONTAB}" >> crontab.txt
-			echo "0 ${LOCAL_TIME} * * * bash <(curl -L -s https://install.direct/go.sh) | tee -a /root/v2rayUpdate.log && service v2ray restart" >> crontab.txt
-			crontab crontab.txt
-			sleep 1
-			if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
-				service crond restart
-			else
-				service cron restart
-			fi
-			rm -f crontab.txt
-			colorEcho ${GREEN} "success open schedule update task: beijing time ${BEIJING_UPDATE_TIME}\n"
-		}
-
-		updateProject() {
-			local DOMAIN=""
-
-			[[ ! $(type pip3 2>/dev/null) ]] && colorEcho $RED "pip3 no install!" && exit 1
-
-			if [[ -e /usr/local/multi-v2ray/multi-v2ray.conf ]];then
-				TEMP_VALUE=$(cat /usr/local/multi-v2ray/multi-v2ray.conf|grep domain|awk 'NR==1')
-				DOMAIN=${TEMP_VALUE/*=}
-				rm -rf /usr/local/multi-v2ray
-			fi
-
-			pip3 install -U v2ray_util
-
-			if [[ -e $UTIL_PATH ]];then
-				[[ -z $(cat $UTIL_PATH|grep lang) ]] && echo "lang=en" >> $UTIL_PATH
-			else
-				mkdir -p /etc/v2ray_util
-				curl $UTIL_CFG > $UTIL_PATH
-				[[ ! -z $DOMAIN ]] && sed -i "s/^domain.*/domain=${DOMAIN}/g" $UTIL_PATH
-			fi
-
-			[[ $CHINESE == 1 ]] && sed -i "s/lang=en/lang=zh/g" $UTIL_PATH
-
-			rm -f /usr/local/bin/v2ray >/dev/null 2>&1
-			ln -s $(which v2ray-util) /usr/local/bin/v2ray
-
-			#更新v2ray bash_completion脚本
-			curl $BASH_COMPLETION_SHELL > /etc/bash_completion.d/v2ray.bash
-			[[ -z $(echo $SHELL|grep zsh) ]] && source /etc/bash_completion.d/v2ray.bash
-			
-			#安装/更新V2ray主程序
-			bash <(curl -L -s https://install.direct/go.sh)
-		}
-
-		#时间同步
-		timeSync() {
-			if [[ ${INSTALL_WAY} == 0 ]];then
-				echo -e "${Info} Time Synchronizing.. ${Font}"
-				ntpdate pool.ntp.org
-				if [[ $? -eq 0 ]];then 
-					echo -e "${OK} Time Sync Success ${Font}"
-					echo -e "${OK} now: `date -R`${Font}"
-					sleep 1
-				else
-					echo -e "${Error} Time sync fail, please run command to sync:${Font}${Yellow}ntpdate pool.ntp.org${Font}"
-				fi
-			fi
-		}
-
-		profileInit() {
-
-			#清理v2ray模块环境变量
-			[[ $(grep v2ray ~/$ENV_FILE) ]] && sed -i '/v2ray/d' ~/$ENV_FILE && source ~/$ENV_FILE
-
-			#解决Python3中文显示问题
-			[[ -z $(grep PYTHONIOENCODING=utf-8 ~/$ENV_FILE) ]] && echo "export PYTHONIOENCODING=utf-8" >> ~/$ENV_FILE && source ~/$ENV_FILE
-
-			# 加入v2ray tab补全环境变量
-			[[ -z $(echo $SHELL|grep zsh) && -z $(grep v2ray.bash ~/$ENV_FILE) ]] && echo "source /etc/bash_completion.d/v2ray.bash" >> ~/$ENV_FILE && source ~/$ENV_FILE
-
-			#全新安装的新配置
-			if [[ ${INSTALL_WAY} == 0 ]];then 
-				v2ray new
-			else
-				v2ray convert
-			fi
-
-			bash <(curl -L -s $CLEAN_IPTABLES_SHELL)
-			echo ""
-		}
-
-		installFinish() {
-			#回到原点
-			cd ${BEGIN_PATH}
-			[[ ${INSTALL_WAY} == 0 ]] && WAY="install" || WAY="update"
-			colorEcho  ${GREEN} "multi-v2ray ${WAY} success!\n"
+	add_user_v2ray(){
+		add_v2ray_single(){
 			clear
+			v2ray add
+			firewall_restart
 			v2ray info
-			echo -e "\n	--胖波比--
-——————————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 管理V2Ray
- ${Green_font_prefix}2.${Font_color_suffix} 回到主页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
-——————————————————————————————————" && echo
-			read -p " 请输入数字 [1-3](默认:3):" num
-			[ -z "${num}" ] && num=3
+			echo -e "
+   ————胖波比————
+——————————————————————
+${Green_font_prefix}1.${Font_color_suffix} 继续添加用户
+${Green_font_prefix}2.${Font_color_suffix} 返回V2Ray用户管理页
+${Green_font_prefix}3.${Font_color_suffix} 退出脚本
+——————————————————————" && echo
+			read -p " 请输入数字 [1-3](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
 				1)
-				v2ray
+				add_v2ray_single
 				;;
 				2)
-				start_menu_main
+				manage_v2ray_user
 				;;
 				3)
 				exit 1
@@ -406,109 +175,191 @@ manage_v2ray(){
 				clear
 				echo -e "${Error}:请输入正确数字 [1-3]:"
 				sleep 2s
-				installFinish
+				manage_v2ray_user
 				;;
 			esac
 		}
 
-		main() {
-			[[ ${HELP} == 1 ]] && help && return
-			[[ ${REMOVE} == 1 ]] && removeV2Ray && return
-			[[ ${INSTALL_WAY} == 0 ]] && colorEcho ${BLUE} "new install\n"
-			
-			checkSys
-			installDependent
-			closeSELinux
-			timeSync
-			
-			#设置定时任务
-			[[ -z $(crontab -l|grep v2ray) ]] && planUpdate
-			updateProject
-			profileInit
-			service v2ray restart
-			installFinish
+		add_v2ray_multi(){
+			clear
+			echo && read -p "请输入要添加的用户个数(默认:1)：" num
+			[ -z "${num}" ] && num=1
+			for(( i = 0; i < ${num}; i++ ))
+			do
+				echo | v2ray add
+			done
+			firewall_restart
+			v2ray info
+			echo -e "\n${Info}按任意键返回V2Ray用户管理页..."
+			char=`get_char`
+			manage_v2ray_user
 		}
-		main
+
+		add_v2ray_menu(){
+			clear
+			echo -e "
+   ————胖波比————
+—————————————————————
+${Green_font_prefix}1.${Font_color_suffix} 逐个添加
+${Green_font_prefix}2.${Font_color_suffix} 批量添加
+${Green_font_prefix}3.${Font_color_suffix} 返回V2Ray用户管理页
+${Green_font_prefix}4.${Font_color_suffix} 退出脚本
+—————————————————————" && echo
+			read -p "请输入数字[1-4](默认:4)：" num
+			[ -z "${num}" ] && num=4
+			case "$num" in
+				1)
+				add_v2ray_single
+				;;
+				2)
+				add_v2ray_multi
+				;;
+				3)
+				manage_v2ray_user
+				;;
+				4)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-4]:"
+				sleep 2s
+				add_v2ray_menu
+				;;
+			esac
+		}
+		add_v2ray_menu
 	}
-	
-	removeV2Ray() {
-		#卸载V2ray官方脚本
-		systemctl stop v2ray  >/dev/null 2>&1
-		systemctl disable v2ray  >/dev/null 2>&1
-		service v2ray stop  >/dev/null 2>&1
-		update-rc.d -f v2ray remove  >/dev/null 2>&1
-		rm -rf  /etc/v2ray/  >/dev/null 2>&1
-		rm -rf /usr/bin/v2ray  >/dev/null 2>&1
-		rm -rf /var/log/v2ray/  >/dev/null 2>&1
-		rm -rf /lib/systemd/system/v2ray.service  >/dev/null 2>&1
-		rm -rf /etc/init.d/v2ray  >/dev/null 2>&1
 
-		#清理v2ray相关iptable规则
-		bash <(curl -L -s $CLEAN_IPTABLES_SHELL)
-
-		#卸载multi-v2ray
-		pip uninstall v2ray_util -y
-		rm -rf /etc/bash_completion.d/v2ray.bash >/dev/null 2>&1
-		rm -rf /usr/local/bin/v2ray >/dev/null 2>&1
-		rm -rf /etc/v2ray_util >/dev/null 2>&1
-
-		#删除v2ray定时更新任务
-		crontab -l|sed '/SHELL=/d;/v2ray/d' > crontab.txt
-		crontab crontab.txt >/dev/null 2>&1
-		rm -f crontab.txt >/dev/null 2>&1
-
-		if [[ ${OS} == 'CentOS' || ${OS} == 'Fedora' ]];then
-			service crond restart >/dev/null 2>&1
-		else
-			service cron restart >/dev/null 2>&1
-		fi
-
-		#删除multi-v2ray环境变量
-		sed -i '/v2ray/d' ~/$ENV_FILE
-		source ~/$ENV_FILE
-
-		colorEcho ${GREEN} "uninstall success!"
-		sleep 2s
-	}
-	
-	start_menu_v2ray(){
+	manage_v2ray_user(){
 		clear
-		echo && echo -e " V2Ray一键安装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-    -- 胖波比 --
+		echo && echo -e "   V2Ray用户管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	  -- 胖波比 --
 		
-———————V2Ray安装管理———————
- ${Green_font_prefix}1.${Font_color_suffix} 安装V2Ray
- ${Green_font_prefix}2.${Font_color_suffix} 管理V2Ray
- ${Green_font_prefix}3.${Font_color_suffix} 卸载V2Ray
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
-———————————————————————————" && echo
-		read -p " 请输入数字 [1-5](默认:5):" num
-		[ -z "${num}" ] && num=5
+————————V2Ray用户管理————————
+${Green_font_prefix}1.${Font_color_suffix} 添加用户
+${Green_font_prefix}2.${Font_color_suffix} 删除用户
+${Green_font_prefix}3.${Font_color_suffix} 查看用户链接
+${Green_font_prefix}4.${Font_color_suffix} 流量统计
+${Green_font_prefix}5.${Font_color_suffix} 更改端口
+${Green_font_prefix}6.${Font_color_suffix} 更改协议
+${Green_font_prefix}7.${Font_color_suffix} 更改tcpFastOpen
+${Green_font_prefix}8.${Font_color_suffix} 走cdn
+${Green_font_prefix}9.${Font_color_suffix} 更改tls
+${Green_font_prefix}10.${Font_color_suffix} 原版管理窗口
+${Green_font_prefix}11.${Font_color_suffix} 回到主页
+${Green_font_prefix}12.${Font_color_suffix} 退出脚本
+——————————————————————————————" && echo
+		read -p " 请输入数字 [1-12](默认:12):" num
+		[ -z "${num}" ] && num=12
 		case "$num" in
 			1)
-			install_v2ray
+			add_user_v2ray
 			;;
 			2)
-			clear
-			v2ray
+			v2ray del
 			;;
 			3)
-			removeV2Ray
+			v2ray info
+			echo -e "${Info}按任意键继续..."
+			char=`get_char`
 			;;
 			4)
-			start_menu_main
+			v2ray stats
 			;;
 			5)
+			v2ray port
+			;;
+			6)
+			v2ray stream
+			;;
+			7)
+			v2ray tfo
+			;;
+			8)
+			v2ray cdn
+			;;
+			9)
+			v2ray tls
+			;;
+			10)
+			v2ray tfo
+			;;
+			11)
+			start_menu_main
+			;;
+			12)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-5]"
+			echo -e "${Error}:请输入正确数字 [1-12]"
+			sleep 2s
+			manage_v2ray_user
+			;;
+		esac
+		manage_v2ray_user
+	}
+
+	start_menu_v2ray(){
+		clear
+		echo && echo -e " V2Ray一键安装脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+	-- 胖波比 --
+
+—————————V2Ray安装—————————
+${Green_font_prefix}1.${Font_color_suffix} 管理V2Ray用户
+${Green_font_prefix}2.${Font_color_suffix} 安装V2Ray
+${Green_font_prefix}3.${Font_color_suffix} 卸载V2Ray
+${Green_font_prefix}4.${Font_color_suffix} 重启V2Ray
+${Green_font_prefix}5.${Font_color_suffix} 关闭V2Ray
+${Green_font_prefix}6.${Font_color_suffix} 启动V2Ray
+${Green_font_prefix}7.${Font_color_suffix} 查看V2Ray状态
+${Green_font_prefix}8.${Font_color_suffix} 回到主页
+${Green_font_prefix}9.${Font_color_suffix} 退出脚本
+———————————————————————————" && echo
+		read -p " 请输入数字 [1-9](默认:9):" num
+		[ -z "${num}" ] && num=9
+		case "$num" in
+			1)
+			manage_v2ray_user
+			;;
+			2)
+			source <(curl -sL https://git.io/fNgqx) --zh
+			echo -e "${Info}任意键继续..."
+			char=`get_char`
+			manage_v2ray_user
+			;;
+			3)
+			source <(curl -sL https://git.io/fNgqx) --remove
+			echo -e "${Info}已卸载，任意键继续..."
+			char=`get_char`
+			;;
+			4)
+			v2ray restart
+			;;
+			5)
+			v2ray stop
+			;;
+			6)
+			v2ray start
+			;;
+			7)
+			v2ray status
+			;;
+			8)
+			start_menu_main
+			;;
+			9)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}:请输入正确数字 [1-9]"
 			sleep 2s
 			start_menu_v2ray
 			;;
 		esac
+		start_menu_v2ray
 	}
 	start_menu_v2ray
 }
@@ -580,7 +431,7 @@ install_ssr(){
 			fi
 		fi
 	}
-		# Get version
+	# Get version
 	getversion(){
 		if [[ -s /etc/redhat-release ]]; then
 			grep -oE  "[0-9.]+" /etc/redhat-release
@@ -920,7 +771,8 @@ EOF
 	# Install cleanup
 	install_cleanup(){
 		cd ${cur_dir}
-		rm -rf ${shadowsocks_r_file}.tar.gz ${shadowsocks_r_file} ${libsodium_file}.tar.gz ${libsodium_file}
+		rm -rf ${shadowsocks_r_file} ${libsodium_file}
+		rm -f ${shadowsocks_r_file}.tar.gz ${libsodium_file}.tar.gz
 	}
 	# Uninstall ShadowsocksR
 	uninstall_shadowsocksr(){
@@ -998,9 +850,7 @@ EOF
 		service shadowsocks restart
 		clear
 		#输出链接
-		echo -e "${Info}SSR已重启！2秒后输出链接"
-		sleep 2s
-		echo -e "${Info}端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
+		echo -e "\n${Info}端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
 		echo -e "${Info}SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
 	}
 	#查看所有链接
@@ -1474,8 +1324,11 @@ install_bbr(){
 	installbbrplus(){
 		kernel_version="4.14.129-bbrplus"
 		if [[ "${release}" == "centos" ]]; then
+			wget -N --no-check-certificate https://${github}/bbrplus/${release}/${version}/kernel-headers-${kernel_version}.rpm
 			wget -N --no-check-certificate https://${github}/bbrplus/${release}/${version}/kernel-${kernel_version}.rpm
+			yum install -y kernel-headers-${kernel_version}.rpm
 			yum install -y kernel-${kernel_version}.rpm
+			rm -f kernel-headers-${kernel_version}.rpm
 			rm -f kernel-${kernel_version}.rpm
 			kernel_version="4.14.129_bbrplus" #fix a bug
 		elif [[ "${release}" == "debian" || "${release}" == "ubuntu" ]]; then
@@ -1500,6 +1353,7 @@ install_bbr(){
 	#安装Lotserver内核
 	installlot(){
 		if [[ "${release}" == "centos" ]]; then
+			kernel_version="2.6.32-504"
 			rpm --import http://${github}/lotserver/${release}/RPM-GPG-KEY-elrepo.org
 			yum remove -y kernel-firmware
 			yum install -y http://${github}/lotserver/${release}/${version}/${bit}/kernel-firmware-${kernel_version}.rpm
@@ -1507,9 +1361,7 @@ install_bbr(){
 			yum remove -y kernel-headers
 			yum install -y http://${github}/lotserver/${release}/${version}/${bit}/kernel-headers-${kernel_version}.rpm
 			yum install -y http://${github}/lotserver/${release}/${version}/${bit}/kernel-devel-${kernel_version}.rpm
-		elif [[ "${release}" == "ubuntu" ]]; then
-			bash <(wget --no-check-certificate -qO- "http://${github}/Debian_Kernel.sh")
-		elif [[ "${release}" == "debian" ]]; then
+		elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
 			bash <(wget --no-check-certificate -qO- "http://${github}/Debian_Kernel.sh")
 		fi
 		detele_kernel
@@ -1730,115 +1582,36 @@ install_bbr(){
 		fi
 	}
 
-	#开始菜单
-	start_menu_bbr(){
-	clear
-	echo && echo -e " TCP加速 一键安装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-  -- 就是爱生活 | 94ish.me --
-  
-————————————内核管理————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装 BBR/BBR魔改版内核
- ${Green_font_prefix}2.${Font_color_suffix} 安装 BBRplus版内核 
- ${Green_font_prefix}3.${Font_color_suffix} 安装 Lotserver(锐速)内核
-————————————加速管理————————————
- ${Green_font_prefix}4.${Font_color_suffix} 使用BBR加速
- ${Green_font_prefix}5.${Font_color_suffix} 使用BBR魔改版加速
- ${Green_font_prefix}6.${Font_color_suffix} 使用暴力BBR魔改版加速(不支持部分系统)
- ${Green_font_prefix}7.${Font_color_suffix} 使用BBRplus版加速
- ${Green_font_prefix}8.${Font_color_suffix} 使用Lotserver(锐速)加速
-————————————杂项管理————————————
- ${Green_font_prefix}9.${Font_color_suffix} 卸载全部加速
- ${Green_font_prefix}10.${Font_color_suffix} 系统配置优化
- ${Green_font_prefix}11.${Font_color_suffix} 回到主页
- ${Green_font_prefix}12.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-
-		check_status
-		if [[ ${kernel_status} == "noinstall" ]]; then
-			echo -e " 当前状态: ${Green_font_prefix}未安装${Font_color_suffix} 加速内核 ${Red_font_prefix}请先安装内核${Font_color_suffix}"
-		else
-			echo -e " 当前状态: ${Green_font_prefix}已安装${Font_color_suffix} ${_font_prefix}${kernel_status}${Font_color_suffix} 加速内核 , ${Green_font_prefix}${run_status}${Font_color_suffix}"
-			
-		fi
-	echo
-	read -p " 请输入数字 [1-12](默认:12):" num
-	[ -z "${num}" ] && num=12
-	case "$num" in
-		1)
-		check_sys_bbr
-		;;
-		2)
-		check_sys_bbrplus
-		;;
-		3)
-		check_sys_Lotsever
-		;;
-		4)
-		startbbr
-		;;
-		5)
-		startbbrmod
-		;;
-		6)
-		startbbrmod_nanqinlang
-		;;
-		7)
-		startbbrplus
-		;;
-		8)
-		startlotserver
-		;;
-		9)
-		remove_all
-		;;
-		10)
-		optimizing_system
-		;;
-		11)
-		start_menu_main
-		;;
-		12)
-		exit 1
-		;;
-		*)
-		clear
-		echo -e "${Error}:请输入正确数字 [1-12]"
-		sleep 2s
-		start_menu_bbr
-		;;
-	esac
-	}
 	#############内核管理组件#############
-
 	#删除多余内核
 	detele_kernel(){
 		if [[ "${release}" == "centos" ]]; then
 			rpm_total=`rpm -qa | grep kernel | grep -v "${kernel_version}" | grep -v "noarch" | wc -l`
 			if [ "${rpm_total}" > "1" ]; then
-				echo -e "检测到 ${rpm_total} 个其余内核，开始卸载..."
+				echo -e "${Info}检测到 ${rpm_total} 个其余内核，开始卸载..."
 				for((integer = 1; integer <= ${rpm_total}; integer++)); do
 					rpm_del=`rpm -qa | grep kernel | grep -v "${kernel_version}" | grep -v "noarch" | head -${integer}`
-					echo -e "开始卸载 ${rpm_del} 内核..."
+					echo -e "${Info}开始卸载 ${rpm_del} 内核..."
 					rpm --nodeps -e ${rpm_del}
-					echo -e "卸载 ${rpm_del} 内核卸载完成，继续..."
+					echo -e "${Info}卸载 ${rpm_del} 内核卸载完成，继续..."
 				done
-				echo --nodeps -e "内核卸载完毕，继续..."
+				echo -e "${Info}内核卸载完毕，继续..."
 			else
-				echo -e " 检测到 内核 数量不正确，请检查 !" && exit 1
+				echo -e "${Info}检测到 内核 数量不正确，请检查 !" && exit 1
 			fi
 		elif [[ "${release}" == "debian" || "${release}" == "ubuntu" ]]; then
 			deb_total=`dpkg -l | grep linux-image | awk '{print $2}' | grep -v "${kernel_version}" | wc -l`
 			if [ "${deb_total}" > "1" ]; then
-				echo -e "检测到 ${deb_total} 个其余内核，开始卸载..."
+				echo -e "${Info}检测到 ${deb_total} 个其余内核，开始卸载..."
 				for((integer = 1; integer <= ${deb_total}; integer++)); do
 					deb_del=`dpkg -l|grep linux-image | awk '{print $2}' | grep -v "${kernel_version}" | head -${integer}`
-					echo -e "开始卸载 ${deb_del} 内核..."
+					echo -e "${Info}开始卸载 ${deb_del} 内核..."
 					apt-get purge -y ${deb_del}
-					echo -e "卸载 ${deb_del} 内核卸载完成，继续..."
+					echo -e "${Info}卸载 ${deb_del} 内核卸载完成，继续..."
 				done
-				echo -e "内核卸载完毕，继续..."
+				echo -e "${Info}内核卸载完毕，继续..."
 			else
-				echo -e " 检测到 内核 数量不正确，请检查 !" && exit 1
+				echo -e "${Info}检测到 内核 数量不正确，请检查 !" && exit 1
 			fi
 		fi
 	}
@@ -1846,13 +1619,13 @@ install_bbr(){
 	#更新引导
 	BBR_grub(){
 		if [[ "${release}" == "centos" ]]; then
-			if [[ ${version} = "6" ]]; then
+			if [[ ${version} == "6" ]]; then
 				if [ ! -f "/boot/grub/grub.conf" ]; then
 					echo -e "${Error} /boot/grub/grub.conf 找不到，请检查."
 					exit 1
 				fi
 				sed -i 's/^default=.*/default=0/g' /boot/grub/grub.conf
-			elif [[ ${version} = "7" ]]; then
+			elif [[ ${version} -ge "7" ]]; then
 				if [ ! -f "/boot/grub2/grub.cfg" ]; then
 					echo -e "${Error} /boot/grub2/grub.cfg 找不到，请检查."
 					exit 1
@@ -1864,21 +1637,10 @@ install_bbr(){
 		fi
 	}
 
-	#############内核管理组件#############
-
-
-
 	#############系统检测组件#############
-
 	#检查Linux版本
 	check_version_bbr(){
-		if [[ -s /etc/redhat-release ]]; then
-			version=`grep -oE  "[0-9.]+" /etc/redhat-release | cut -d . -f 1`
-		else
-			version=`grep -oE  "[0-9.]+" /etc/issue | cut -d . -f 1`
-		fi
-		bit=`uname -m`
-		if [[ ${bit} = "x86_64" ]]; then
+		if [[ "${bit}" =~ "64" ]]; then
 			bit="x64"
 		else
 			bit="x32"
@@ -1935,7 +1697,6 @@ install_bbr(){
 			echo -e "${Error} BBRplus内核不支持当前系统 ${release} ${version} ${bit} !" && exit 1
 		fi
 	}
-
 
 	#检查安装Lotsever的系统要求
 	check_sys_Lotsever(){
@@ -2048,6 +1809,85 @@ install_bbr(){
 				run_status="未安装加速模块"
 			fi
 		fi
+	}
+
+	#开始菜单
+	start_menu_bbr(){
+	clear
+	echo && echo -e " TCP加速 一键安装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
+  -- 就是爱生活 | 94ish.me --
+  
+————————————内核管理————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 安装 BBR/BBR魔改版内核
+ ${Green_font_prefix}2.${Font_color_suffix} 安装 BBRplus版内核 
+ ${Green_font_prefix}3.${Font_color_suffix} 安装 Lotserver(锐速)内核
+————————————加速管理————————————
+ ${Green_font_prefix}4.${Font_color_suffix} 使用BBR加速
+ ${Green_font_prefix}5.${Font_color_suffix} 使用BBR魔改版加速
+ ${Green_font_prefix}6.${Font_color_suffix} 使用暴力BBR魔改版加速(不支持部分系统)
+ ${Green_font_prefix}7.${Font_color_suffix} 使用BBRplus版加速
+ ${Green_font_prefix}8.${Font_color_suffix} 使用Lotserver(锐速)加速
+————————————杂项管理————————————
+ ${Green_font_prefix}9.${Font_color_suffix} 卸载全部加速
+ ${Green_font_prefix}10.${Font_color_suffix} 系统配置优化
+ ${Green_font_prefix}11.${Font_color_suffix} 回到主页
+ ${Green_font_prefix}12.${Font_color_suffix} 退出脚本
+————————————————————————————————" && echo
+
+		check_status
+		if [[ ${kernel_status} == "noinstall" ]]; then
+			echo -e " 当前状态: ${Green_font_prefix}未安装${Font_color_suffix} 加速内核 ${Red_font_prefix}请先安装内核${Font_color_suffix}"
+		else
+			echo -e " 当前状态: ${Green_font_prefix}已安装${Font_color_suffix} ${_font_prefix}${kernel_status}${Font_color_suffix} 加速内核 , ${Green_font_prefix}${run_status}${Font_color_suffix}"
+			
+		fi
+	echo
+	read -p " 请输入数字 [1-12](默认:12):" num
+	[ -z "${num}" ] && num=12
+	case "$num" in
+		1)
+		check_sys_bbr
+		;;
+		2)
+		check_sys_bbrplus
+		;;
+		3)
+		check_sys_Lotsever
+		;;
+		4)
+		startbbr
+		;;
+		5)
+		startbbrmod
+		;;
+		6)
+		startbbrmod_nanqinlang
+		;;
+		7)
+		startbbrplus
+		;;
+		8)
+		startlotserver
+		;;
+		9)
+		remove_all
+		;;
+		10)
+		optimizing_system
+		;;
+		11)
+		start_menu_main
+		;;
+		12)
+		exit 1
+		;;
+		*)
+		clear
+		echo -e "${Error}:请输入正确数字 [1-12]"
+		sleep 2s
+		start_menu_bbr
+		;;
+	esac
 	}
 	check_version_bbr
 	start_menu_bbr
@@ -3624,35 +3464,39 @@ EOF
 set_ssh(){
 	# Use default SSH port 22. If you use another SSH port on your server
 	if [ -e "/etc/ssh/sshd_config" ];then
-		[ -z "`grep ^Port /etc/ssh/sshd_config`" ] && ssh_port=22 || ssh_port=`grep ^Port /etc/ssh/sshd_config | awk '{print $2}'`
+		ssh_port=$(cat /etc/ssh/sshd_config | grep "Port " | tail -1 | awk -F ' ' '{print $2}')
 		while :; do echo
 			read -p "Please input SSH port(Default: $ssh_port): " SSH_PORT
 			[ -z "$SSH_PORT" ] && SSH_PORT=$ssh_port
 			if [ $SSH_PORT -eq 22 >/dev/null 2>&1 -o $SSH_PORT -gt 1024 >/dev/null 2>&1 -a $SSH_PORT -lt 65535 >/dev/null 2>&1 ];then
 				break
 			else
-				echo "${CWARNING}input error! Input range: 22,1025~65534${CEND}"
+				echo "${Error}input error! Input range: 22,1025~65534${CEND}"
 			fi
 		done
-	 
-		if [ -z "`grep ^Port /etc/ssh/sshd_config`" -a "$SSH_PORT" != '22' ];then
-			sed -i "s@^#Port.*@&\nPort $SSH_PORT@" /etc/ssh/sshd_config
-		elif [ -n "`grep ^Port /etc/ssh/sshd_config`" ];then
-			sed -i "s@^Port.*@Port $SSH_PORT@" /etc/ssh/sshd_config
+		#修改SSH端口
+		if [[ "${ssh_port}" == "22" && "${SSH_PORT}" != "22" ]]; then
+			sed -i "/Port 22/a\Port ${SSH_PORT}" /etc/ssh/sshd_config
+		elif [[ "${ssh_port}" != "22" && "${SSH_PORT}" != "22" ]]; then
+			sed -i "s/Port ${ssh_port}/Port ${SSH_PORT}/g" /etc/ssh/sshd_config
+		elif [[ "${ssh_port}" != "22" && "${SSH_PORT}" == "22" ]]; then
+			sed -i "/Port ${ssh_port}/d" /etc/ssh/sshd_config
 		fi
+		#开放端口
+		port=$ssh_port
+		delete_firewall
+		port=$SSH_PORT
+		add_firewall
+		firewall_restart
+		#重启SSH防火墙
+		if [[ "${release}" == "centos" ]]; then
+			service sshd restart
+		elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
+			service ssh restart
+		fi
+		echo -e "${Info}SSH防火墙已重启！"
+		echo -e "${Info}已将SSH端口修改为：${Red_font_prefix}${port}${Font_color_suffix}"
 	fi
-	#开放端口
-	port=$SSH_PORT
-	add_firewall
-	firewall_restart
-	#重启SSH防火墙
-	if [[ "${release}" == "centos" ]]; then
-		service sshd restart
-	elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
-		service ssh restart
-	fi
-	echo -e "${Info}SSH防火墙已重启！"
-	echo -e "${Info}已将SSH端口修改为：${Red_font_prefix}${port}${Font_color_suffix}"
 	echo -e "\n${Info}按任意键返回主页..."
 	char=`get_char`
 	start_menu_main
@@ -4952,7 +4796,6 @@ set_firewall(){
 	delete_firewall_all(){
 		echo -e "${Info}开始设置防火墙..."
 		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-			firewall-cmd --get-active-zones
 			firewall-cmd --permanent --zone=public --remove-port=1-65535/tcp > /dev/null 2>&1
 			firewall-cmd --permanent --zone=public --remove-port=1-65535/udp > /dev/null 2>&1
 		else
@@ -5021,7 +4864,7 @@ update_sv(){
 			wget -N --no-check-certificate http://${github}/sv.sh && chmod +x sv.sh
 			exec ./sv.sh
 		else
-			echo && echo "${Info}已取消..." && echo
+			echo && echo -e "${Info}已取消..." && echo
 		fi
 	else
 		echo -e "${Info}当前已是最新版本[ ${sh_new_ver} ] !"
@@ -5138,19 +4981,34 @@ start_menu_main(){
 }
 
 check_sys
-[[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error} 本脚本不支持当前系统 ${release} !" && exit 1
 #安装依赖
 test ! -e /root/test/de || start_menu_main
+[[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error} 本脚本不支持当前系统 ${release} !" && exit 1
+#暂不支持CentOS 8与Debian 10系统
+if [[ "${release}" == "centos" ]]; then
+	if [[ "${version}" -ge "8" ]]; then
+		echo -e "${Error}暂不支持CentOS ${version}系统，任意键继续..."
+		exit 1;
+	elif [[ "${version}" == "7" ]]; then
+		systemctl start firewalld
+		systemctl enable firewalld
+	fi
+elif [[ "${release}" == "debian" && "${version}" -ge "10" ]]; then
+	echo -e "${Error}暂不支持Debian ${version}系统，任意键继续..."
+	exit 1;
+fi
 add_firewall_base
 firewall_restart
 echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续..."
 char=`get_char`
 if [[ "${release}" == "centos" ]]; then
-	yum -y install python python-devel python-setuptools openssl openssl-devel git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq epel-release
+	#python-devel python-setuptools
+	yum -y install epel-release git bash curl wget zip unzip gcc jq python36 openssl openssl-devel automake autoconf make libtool ca-certificates python3-pip subversion vim
 else
 	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules' > /etc/network/if-pre-up.d/iptables
 	chmod +x /etc/network/if-pre-up.d/iptables
-	apt-get -y install python python-dev python-setuptools openssl libssl-dev git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates python3-pip subversion vim jq
+	apt-get --fix-broken install
+	apt-get -y install git bash curl wget zip unzip gcc jq python python-setuptools openssl libssl-dev automake autoconf make libtool ca-certificates python3-pip subversion vim
 fi
 mkdir -p /root/test && touch /root/test/de
 start_menu_main
