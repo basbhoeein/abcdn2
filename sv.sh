@@ -2,7 +2,7 @@
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-sh_ver="6.5.5"
+sh_ver="7.0.0"
 
 #颜色信息
 Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m"
@@ -73,8 +73,10 @@ firewall_restart(){
 	else
 		if [[ ${release} == "centos" ]]; then
 			service iptables save
+			service ip6tables save
 		else
 			iptables-save > /etc/iptables.up.rules
+			ip6tables-save > /etc/ip6tables.up.rules
 		fi
 	fi
 	echo -e "${Info}防火墙设置完成！"
@@ -86,6 +88,8 @@ add_firewall(){
 	else
 		iptables -I INPUT -p tcp --dport ${port} -j ACCEPT
 		iptables -I INPUT -p udp --dport ${port} -j ACCEPT
+		ip6tables -I INPUT -p tcp --dport ${port} -j ACCEPT
+		ip6tables -I INPUT -p udp --dport ${port} -j ACCEPT
 	fi
 }
 add_firewall_base(){
@@ -110,6 +114,8 @@ add_firewall_all(){
 	else
 		iptables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
 		iptables -I INPUT -p udp --dport 1:65535 -j ACCEPT
+		ip6tables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
+		ip6tables -I INPUT -p udp --dport 1:65535 -j ACCEPT
 	fi
 	firewall_restart
 }
@@ -120,6 +126,8 @@ delete_firewall(){
 	else
 		iptables -I INPUT -p tcp --dport ${port} -j DROP
 		iptables -I INPUT -p udp --dport ${port} -j DROP
+		ip6tables -I INPUT -p tcp --dport ${port} -j DROP
+		ip6tables -I INPUT -p udp --dport ${port} -j DROP
 	fi
 }
 #安装Docker
@@ -146,12 +154,77 @@ install_docker(){
 
 #安装V2ray
 manage_v2ray(){
+	v2ray_info(){
+		sed -i "s#ps\":.*,#ps\": \"企鹅号:3450633979\",#g" $(cat /root/test/v2raypath)
+		v2ray info
+	}
+	change_uuid(){
+		clear
+		num=$(jq ".inbounds | length" /etc/v2ray/config.json)
+		echo -e "\n${Info}当前用户总数：${Red_font_prefix}${num}${Font_color_suffix}\n"
+		unset i
+		until [[ "${i}" -ge "1" && "${i}" -le "${num}" ]]
+		do
+			read -p "请输入要修改的用户序号 [1-${num}]:" i
+		done
+		i=$[${i}-1]
+		uuid1=$(jq -r ".inbounds[${i}].settings.clients[0].id" /etc/v2ray/config.json)
+		uuid2=$(cat /proc/sys/kernel/random/uuid)
+		sed -i "s#${uuid1}#${uuid2}#g" /etc/v2ray/config.json
+		clear
+		v2ray restart
+		v2ray_info
+		echo && echo -e "	————胖波比————
+ —————————————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 继续更改UUID
+ ${Green_font_prefix}2.${Font_color_suffix} 返回V2Ray用户管理页
+ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
+ —————————————————————————————" && echo
+		read -p " 请输入数字 [1-3](默认:2)：" num
+		[ -z "${num}" ] && num=2
+		case "$num" in
+			1)
+			change_uuid
+			;;
+			2)
+			manage_v2ray_user
+			;;
+			3)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}:请输入正确数字 [1-3]:"
+			sleep 2s
+			manage_v2ray_user
+			;;
+		esac
+	}
+	change_ws(){
+		num=$(jq ".inbounds | length" /etc/v2ray/config.json)
+		for(( i = 0; i < ${num}; i++ ))
+		do
+			protocol=$(jq -r ".inbounds[${i}].streamSettings.network" /etc/v2ray/config.json)
+			if [[ "${protocol}" != "ws" ]]; then
+				cat /etc/v2ray/config.json | jq "del(.inbounds[${i}].streamSettings.${protocol}Settings[])" | jq '.inbounds['${i}'].streamSettings.network="ws"' > /root/test/temp.json
+				temppath="/$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 8)/"
+				cat /root/test/temp.json | jq '.inbounds['${i}'].streamSettings.wsSettings.path="'${temppath}'"' | jq '.inbounds['${i}'].streamSettings.wsSettings.headers.Host="www.bilibili.com"' > /etc/v2ray/config.json
+			fi
+		done
+		v2ray restart
+		clear
+		v2ray_info
+		echo -e "\n${Info}按任意键返回V2Ray用户管理页..."
+		char=`get_char`
+		manage_v2ray_user
+	}
 	add_user_v2ray(){
 		add_v2ray_single(){
 			clear
+			echo -e "\n${Info}当前用户总数：${Red_font_prefix}$(jq ".inbounds | length" /etc/v2ray/config.json)${Font_color_suffix}\n"
 			v2ray add
 			firewall_restart
-			v2ray info
+			v2ray_info
 			echo -e "
    ————胖波比————
 ——————————————————————
@@ -179,22 +252,21 @@ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
 				;;
 			esac
 		}
-
 		add_v2ray_multi(){
 			clear
-			echo && read -p "请输入要添加的用户个数(默认:1)：" num
+			echo -e "\n${Info}当前用户总数：${Red_font_prefix}$(jq ".inbounds | length" /etc/v2ray/config.json)${Font_color_suffix}\n"
+			read -p "请输入要添加的用户个数(默认:1)：" num
 			[ -z "${num}" ] && num=1
 			for(( i = 0; i < ${num}; i++ ))
 			do
 				echo | v2ray add
 			done
 			firewall_restart
-			v2ray info
+			v2ray_info
 			echo -e "\n${Info}按任意键返回V2Ray用户管理页..."
 			char=`get_char`
 			manage_v2ray_user
 		}
-
 		add_v2ray_menu(){
 			clear
 			echo -e "
@@ -230,77 +302,101 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 		}
 		add_v2ray_menu
 	}
-
 	manage_v2ray_user(){
 		clear
 		echo && echo -e "   V2Ray用户管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
 	  -- 胖波比 --
-		
+手动修改配置文件：vi /etc/v2ray/config.json
+
 ————————V2Ray用户管理————————
-${Green_font_prefix}1.${Font_color_suffix} 添加用户
-${Green_font_prefix}2.${Font_color_suffix} 删除用户
-${Green_font_prefix}3.${Font_color_suffix} 查看用户链接
-${Green_font_prefix}4.${Font_color_suffix} 流量统计
-${Green_font_prefix}5.${Font_color_suffix} 更改端口
-${Green_font_prefix}6.${Font_color_suffix} 更改协议
-${Green_font_prefix}7.${Font_color_suffix} 更改tcpFastOpen
-${Green_font_prefix}8.${Font_color_suffix} 走cdn
-${Green_font_prefix}9.${Font_color_suffix} 更改tls
-${Green_font_prefix}10.${Font_color_suffix} 原版管理窗口
-${Green_font_prefix}11.${Font_color_suffix} 回到主页
-${Green_font_prefix}12.${Font_color_suffix} 退出脚本
+${Green_font_prefix}1.${Font_color_suffix} 更改UUID
+${Green_font_prefix}2.${Font_color_suffix} 查看用户链接
+${Green_font_prefix}3.${Font_color_suffix} 流量统计
+${Green_font_prefix}4.${Font_color_suffix} 添加用户
+${Green_font_prefix}5.${Font_color_suffix} 删除用户
+${Green_font_prefix}6.${Font_color_suffix} 更改端口
+${Green_font_prefix}7.${Font_color_suffix} 更改协议
+${Green_font_prefix}8.${Font_color_suffix} 更改TcpFastOpen
+${Green_font_prefix}9.${Font_color_suffix} 原版管理窗口
+${Green_font_prefix}10.${Font_color_suffix} 改为WebSocket传输
+${Green_font_prefix}11.${Font_color_suffix} 走cdn
+${Green_font_prefix}12.${Font_color_suffix} 更改tls
+${Green_font_prefix}13.${Font_color_suffix} 回到主页
+${Green_font_prefix}14.${Font_color_suffix} 退出脚本
 ——————————————————————————————" && echo
-		read -p " 请输入数字 [1-12](默认:12):" num
-		[ -z "${num}" ] && num=12
+		read -p " 请输入数字 [1-14](默认:14):" num
+		[ -z "${num}" ] && num=14
 		case "$num" in
 			1)
-			add_user_v2ray
+			change_uuid
 			;;
 			2)
-			v2ray del
-			;;
-			3)
-			v2ray info
+			v2ray_info
 			echo -e "${Info}按任意键继续..."
 			char=`get_char`
 			;;
+			3)
+			v2ray iptables
+			;;
 			4)
-			v2ray stats
+			add_user_v2ray
 			;;
 			5)
-			v2ray port
+			v2ray del
 			;;
 			6)
-			v2ray stream
+			v2ray port
 			;;
 			7)
-			v2ray tfo
+			v2ray stream
 			;;
 			8)
-			v2ray cdn
-			;;
-			9)
-			v2ray tls
-			;;
-			10)
 			v2ray tfo
 			;;
+			9)
+			clear
+			v2ray
+			;;
+			10)
+			change_ws
+			;;
 			11)
-			start_menu_main
+			v2ray cdn
 			;;
 			12)
+			v2ray tls
+			;;
+			13)
+			start_menu_main
+			;;
+			14)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-12]"
+			echo -e "${Error}:请输入正确数字 [1-14]"
 			sleep 2s
 			manage_v2ray_user
 			;;
 		esac
 		manage_v2ray_user
 	}
-
+	install_v2ray(){
+		if [[ "${release}" == "centos" ]]; then
+			systemctl stop firewalld.service
+			systemctl disable firewalld.service
+		fi
+		source <(curl -sL https://git.io/fNgqx) --zh
+		find / -name group.py | grep v2ray_util > /root/test/v2raypath
+		echo -e "${Info}任意键继续..."
+		char=`get_char`
+		manage_v2ray_user
+	}
+	install_v2ray_repair(){
+		source <(curl -sL https://git.io/fNgqx) -k
+		echo -e "${Info}已保留配置更新，任意键继续..."
+		char=`get_char`
+	}
 	start_menu_v2ray(){
 		clear
 		echo && echo -e " V2Ray一键安装脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
@@ -309,52 +405,53 @@ ${Green_font_prefix}12.${Font_color_suffix} 退出脚本
 —————————V2Ray安装—————————
 ${Green_font_prefix}1.${Font_color_suffix} 管理V2Ray用户
 ${Green_font_prefix}2.${Font_color_suffix} 安装V2Ray
-${Green_font_prefix}3.${Font_color_suffix} 卸载V2Ray
-${Green_font_prefix}4.${Font_color_suffix} 重启V2Ray
-${Green_font_prefix}5.${Font_color_suffix} 关闭V2Ray
-${Green_font_prefix}6.${Font_color_suffix} 启动V2Ray
-${Green_font_prefix}7.${Font_color_suffix} 查看V2Ray状态
-${Green_font_prefix}8.${Font_color_suffix} 回到主页
-${Green_font_prefix}9.${Font_color_suffix} 退出脚本
+${Green_font_prefix}3.${Font_color_suffix} 修复V2Ray
+${Green_font_prefix}4.${Font_color_suffix} 卸载V2Ray
+${Green_font_prefix}5.${Font_color_suffix} 重启V2Ray
+${Green_font_prefix}6.${Font_color_suffix} 关闭V2Ray
+${Green_font_prefix}7.${Font_color_suffix} 启动V2Ray
+${Green_font_prefix}8.${Font_color_suffix} 查看V2Ray状态
+${Green_font_prefix}9.${Font_color_suffix} 回到主页
+${Green_font_prefix}10.${Font_color_suffix} 退出脚本
 ———————————————————————————" && echo
-		read -p " 请输入数字 [1-9](默认:9):" num
-		[ -z "${num}" ] && num=9
+		read -p " 请输入数字 [1-10](默认:10):" num
+		[ -z "${num}" ] && num=10
 		case "$num" in
 			1)
 			manage_v2ray_user
 			;;
 			2)
-			source <(curl -sL https://git.io/fNgqx) --zh
-			echo -e "${Info}任意键继续..."
-			char=`get_char`
-			manage_v2ray_user
+			install_v2ray
 			;;
 			3)
+			install_v2ray_repair
+			;;
+			4)
 			source <(curl -sL https://git.io/fNgqx) --remove
 			echo -e "${Info}已卸载，任意键继续..."
 			char=`get_char`
 			;;
-			4)
+			5)
 			v2ray restart
 			;;
-			5)
+			6)
 			v2ray stop
 			;;
-			6)
+			7)
 			v2ray start
 			;;
-			7)
+			8)
 			v2ray status
 			;;
-			8)
+			9)
 			start_menu_main
 			;;
-			9)
+			10)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-9]"
+			echo -e "${Error}:请输入正确数字 [1-10]"
 			sleep 2s
 			start_menu_v2ray
 			;;
@@ -834,11 +931,11 @@ EOF
 	}
 	#读取端口密码
 	get_pp(){
-		cat > ppj<<-EOF
+		cat > /root/test/ppj<<-EOF
 $(jq '.port_password' /etc/shadowsocks.json)
 EOF
-		pp=$(jq -r "to_entries|map(\"\(.key):\(.value|tostring)\")|.[]" ppj)
-		cat > ppj<<-EOF
+		pp=$(jq -r "to_entries|map(\"\(.key):\(.value|tostring)\")|.[]" /root/test/ppj)
+		cat > /root/test/ppj<<-EOF
 ${pp}
 EOF
 	}
@@ -857,7 +954,7 @@ EOF
 	view_ssrurl(){
 		clear
 		get_pp
-		cat ppj | while read line; do
+		cat /root/test/ppj | while read line; do
 			port=`echo $line|awk -F ':' '{print $1}'`
 			password=`echo $line|awk -F ':' '{print $2}'`
 			echo -e "端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
@@ -882,53 +979,107 @@ EOF
 
 	#更改密码
 	change_pw(){
-		#查看文件内容
-		clear
-		get_pp
-		jq '.port_password' /etc/shadowsocks.json
-		echo -e "${Info}以上是配置文件的内容\n"
-		#判断端口是否已有,清空port内存
-		unset port
-		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
-		do
-			read -p "请输入要改密的端口号：" port
-		done
-		password1=$(cat ppj | grep "${port}:" | awk -F ':' '{print $2}')
-		password=$(openssl rand -base64 6)
-		et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
-		until [[ "${password1}" == "${password}" ]]
-		do
+		change_pw_single(){
+			clear
+			jq '.port_password' /etc/shadowsocks.json
+			echo -e "${Info}以上是配置文件的内容\n"
+			#判断端口是否已有,清空port内存
+			unset port
+			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+			do
+				read -p "请输入要改密的端口号：" port
+			done
+			password1=$(jq -r '.port_password."'${port}'"' /etc/shadowsocks.json)
+			password=$(openssl rand -base64 6)
+			et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
 			sed -i "${et}s#${password1}#${password}#g" /etc/shadowsocks.json
-			get_pp
-			password1=$(cat ppj | grep "${port}:" | awk -F ':' '{print $2}')
-		done
-		#调用生成链接的函数
-		set_ssrurl
-		echo -e "	————胖波比————
+			#调用生成链接的函数
+			set_ssrurl
+			echo -e "	————胖波比————
  —————————————————————————————
  ${Green_font_prefix}1.${Font_color_suffix} 继续更改用户密码
  ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
  ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
  —————————————————————————————" && echo
-		read -p " 请输入数字 [1-3](默认:3)：" num
-		[ -z "${num}" ] && num=3
-		case "$num" in
-			1)
-			change_pw
-			;;
-			2)
-			manage_ssr
-			;;
-			3)
-			exit 1
-			;;
-			*)
+			read -p " 请输入数字 [1-3](默认:1)：" num
+			[ -z "${num}" ] && num=1
+			case "$num" in
+				1)
+				change_pw_single
+				;;
+				2)
+				manage_ssr
+				;;
+				3)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-3]:"
+				sleep 2s
+				change_pw_menu
+				;;
+			esac
+		}
+		change_pw_multi(){
 			clear
-			echo -e "${Error}:请输入正确数字 [1-3]:"
-			sleep 2s
+			get_pp
+			cat /root/test/ppj | while read line; do
+				port=`echo $line|awk -F ':' '{print $1}'`
+				password1=`echo $line|awk -F ':' '{print $2}'`
+				password=$(openssl rand -base64 6)
+				et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
+				sed -i "${et}s#${password1}#${password}#g" /etc/shadowsocks.json
+				echo -e "端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
+				SSRPWDbase64=$(urlsafe_base64 "${password}")
+				SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
+				SSRurl="ssr://${SSRbase64}"
+				echo -e "SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+			done
+			echo -e "服务器IP    ：${Red_font_prefix}$(get_ip)${Font_color_suffix}"
+			echo -e "加密方式    ：${Red_font_prefix}${method}${Font_color_suffix}"
+			echo -e "协议        ：${Red_font_prefix}${protocol}${Font_color_suffix}"
+			echo -e "混淆        ：${Red_font_prefix}${obfs}${Font_color_suffix}"
+			echo -e "当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			service shadowsocks restart
+			echo -e "${Info}SSR已重启！"
+			echo -e "${Info}按任意键回到SSR用户管理页..."
+			char=`get_char`
 			manage_ssr
-			;;
-		esac
+		}
+		change_pw_menu(){
+			clear
+			echo && echo -e "    ————胖波比————
+ —————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 逐个修改
+ ${Green_font_prefix}2.${Font_color_suffix} 全部修改
+ ${Green_font_prefix}3.${Font_color_suffix} 返回SSR用户管理页
+ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
+ —————————————————————" && echo
+			read -p "请输入数字[1-4](默认:4)：" num
+			[ -z "${num}" ] && num=4
+			case "$num" in
+				1)
+				change_pw_single
+				;;
+				2)
+				change_pw_multi
+				;;
+				3)
+				manage_ssr
+				;;
+				4)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-4]:"
+				sleep 2s
+				change_pw_menu
+				;;
+			esac
+		}
+		change_pw_menu
 	}
 	#添加用户
 	add_user(){
@@ -946,7 +1097,8 @@ EOF
 			add_firewall
 			firewall_restart
 			password=$(openssl rand -base64 6)
-			sed -i "7i\\\t\t\"${port}\":\"${password}\"," /etc/shadowsocks.json
+			cat /etc/shadowsocks.json | jq '.port_password."'${port}'"="'${password}'"' > /root/test/temp.json
+			cp /root/test/temp.json /etc/shadowsocks.json
 			set_ssrurl
 			echo -e "    ————胖波比————
  ——————————————————————
@@ -989,7 +1141,8 @@ EOF
 				done
 				add_firewall
 				password=$(openssl rand -base64 6)
-				sed -i "7i\\\t\t\"${port}\":\"${password}\"," /etc/shadowsocks.json
+				cat /etc/shadowsocks.json | jq '.port_password."'${port}'"="'${password}'"' > /root/test/temp.json
+				cp /root/test/temp.json /etc/shadowsocks.json
 				SSRPWDbase64=$(urlsafe_base64 "${password}")
 				SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
 				SSRurl="ssr://${SSRbase64}"
@@ -1038,56 +1191,100 @@ EOF
 			esac
 		}
 		add_user_menu
-	}	
-	#删除用户
+	}
 	delete_user(){
-		clear
-		jq '.port_password' /etc/shadowsocks.json
-		echo -e "${Info}以上是配置文件的内容\n"
-		unset port
-		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
-		do
-			read -p "请输入要删除的端口:" port
-		done
-		et=$(awk "/${port}/{getline;print}" /etc/shadowsocks.json)
-		if [[ `expr index "${et}" '}'` -ne '0' ]]; then
-			et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
-			((et--))
-			sed -i "${et}s/,//g" /etc/shadowsocks.json
-		fi
-		sed -i "/${port}/d" /etc/shadowsocks.json
-		echo -e "${Info}用户已删除..."
-		delete_firewall
-		firewall_restart
-		service shadowsocks restart
-		echo -e "${Info}SSR已重启！"
-		sleep 2s
-		clear
-		echo && echo -e "	————胖波比————
+		delete_user_single(){
+			clear
+			jq '.port_password' /etc/shadowsocks.json
+			echo -e "${Info}以上是配置文件的内容\n"
+			unset port
+			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+			do
+				read -p "请输入要删除的端口:" port
+			done
+			cat /etc/shadowsocks.json | jq 'del(.port_password."'${port}'")' > /root/test/temp.json
+			cp /root/test/temp.json /etc/shadowsocks.json
+			echo -e "${Info}用户已删除..."
+			delete_firewall
+			firewall_restart
+			service shadowsocks restart
+			echo -e "${Info}SSR已重启！"
+			sleep 2s
+			clear
+			echo && echo -e "	————胖波比————
  —————————————————————————————
  ${Green_font_prefix}1.${Font_color_suffix} 继续删除用户
  ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
  ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
  —————————————————————————————"
-		read -p " 请输入数字 [1-3](默认:3)：" num
-		[ -z "${num}" ] && num=3
-		case "$num" in
-			1)
-			delete_user
-			;;
-			2)
-			manage_ssr
-			;;
-			3)
-			exit 1
-			;;
-			*)
+			read -p " 请输入数字 [1-3](默认:1)：" num
+			[ -z "${num}" ] && num=1
+			case "$num" in
+				1)
+				delete_user_single
+				;;
+				2)
+				manage_ssr
+				;;
+				3)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-3]:"
+				sleep 2s
+				manage_ssr
+				;;
+			esac
+		}
+		delete_user_multi(){
 			clear
-			echo -e "${Error}:请输入正确数字 [1-3]:"
-			sleep 2s
+			get_pp
+			cat /root/test/ppj | while read line; do
+				port=`echo $line|awk -F ':' '{print $1}'`
+				delete_firewall
+			done
+			firewall_restart
+			cat /etc/shadowsocks.json | jq "del(.port_password[])" > /root/test/temp.json
+			cp /root/test/temp.json /etc/shadowsocks.json
+			echo -e "${Info}当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			echo -e "${Info}按任意键返回SSR用户管理页..."
+			char=`get_char`
 			manage_ssr
-			;;
-		esac
+		}
+		delete_user_menu(){
+			clear
+			echo && echo -e "    ————胖波比————
+ —————————————————————
+ ${Green_font_prefix}1.${Font_color_suffix} 逐个删除
+ ${Green_font_prefix}2.${Font_color_suffix} 全部删除
+ ${Green_font_prefix}3.${Font_color_suffix} 返回SSR用户管理页
+ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
+ —————————————————————" && echo
+			read -p "请输入数字[1-4](默认:4)：" num
+			[ -z "${num}" ] && num=4
+			case "$num" in
+				1)
+				delete_user_single
+				;;
+				2)
+				delete_user_multi
+				;;
+				3)
+				manage_ssr
+				;;
+				4)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}:请输入正确数字 [1-4]:"
+				sleep 2s
+				delete_user_menu
+				;;
+			esac
+		}
+		delete_user_menu
 	}
 	#更改端口
 	change_port(){
@@ -1100,7 +1297,7 @@ EOF
 		do
 			read -p "请输入要修改的端口号：" port
 		done
-		password=$(cat ppj | grep "${port}:" | awk -F ':' '{print $2}')
+		password=$(cat /root/test/ppj | grep "${port}:" | awk -F ':' '{print $2}')
 		delete_firewall
 		port1=${port}
 		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
@@ -4852,8 +5049,9 @@ set_firewall(){
 
 #更新脚本
 update_sv(){
+	clear
 	github="raw.githubusercontent.com/AmuyangA/internet/master/supervpn"
-	echo -e "${Info}当前版本为 [ ${sh_ver} ]，开始检测最新版本..."
+	echo -e "\n${Info}当前版本为 [ ${sh_ver} ]，开始检测最新版本..."
 	sh_new_ver=$(wget --no-check-certificate -qO- "http://${github}/sv.sh"|grep 'sh_ver="'|awk -F "=" '{print $NF}'|sed 's/\"//g'|head -1)
 	[[ -z ${sh_new_ver} ]] && echo -e "${Error} 检测最新版本失败 !" && start_menu_main
 	if [[ ${sh_new_ver} != ${sh_ver} ]]; then
@@ -4981,7 +5179,6 @@ start_menu_main(){
 }
 
 check_sys
-#安装依赖
 test ! -e /root/test/de || start_menu_main
 [[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error} 本脚本不支持当前系统 ${release} !" && exit 1
 #暂不支持CentOS 8与Debian 10系统
@@ -4992,23 +5189,34 @@ if [[ "${release}" == "centos" ]]; then
 	elif [[ "${version}" == "7" ]]; then
 		systemctl start firewalld
 		systemctl enable firewalld
+	else
+		service iptables save
+		service ip6tables save
+		chkconfig --level 2345 iptables on
+		chkconfig --level 2345 ip6tables on
 	fi
 elif [[ "${release}" == "debian" && "${version}" -ge "10" ]]; then
 	echo -e "${Error}暂不支持Debian ${version}系统，任意键继续..."
 	exit 1;
+else
+	iptables-save > /etc/iptables.up.rules
+	ip6tables-save > /etc/ip6tables.up.rules
+	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules\n/sbin/ip6tables-restore < /etc/ip6tables.up.rules' > /etc/network/if-pre-up.d/iptables
+	chmod +x /etc/network/if-pre-up.d/iptables
 fi
+echo "export LANG=\"en_US.UTF-8\"" >> .bash_profile
 add_firewall_base
 firewall_restart
 echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续..."
 char=`get_char`
 if [[ "${release}" == "centos" ]]; then
-	#python-devel python-setuptools
+	#安装依赖python-devel python-setuptools
 	yum -y install epel-release git bash curl wget zip unzip gcc jq python36 openssl openssl-devel automake autoconf make libtool ca-certificates python3-pip subversion vim
 else
-	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules' > /etc/network/if-pre-up.d/iptables
-	chmod +x /etc/network/if-pre-up.d/iptables
 	apt-get --fix-broken install
 	apt-get -y install git bash curl wget zip unzip gcc jq python python-setuptools openssl libssl-dev automake autoconf make libtool ca-certificates python3-pip subversion vim
 fi
 mkdir -p /root/test && touch /root/test/de
-start_menu_main
+country=$(curl ipinfo.io | jq ".country" | sed  "s#\"##g")
+sed -i "s#企鹅号#${country}-企鹅号#g" sv.sh
+exec ./sv.sh
