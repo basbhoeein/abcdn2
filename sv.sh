@@ -1,16 +1,30 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
+stty erase ^H
 
 #版本
-sh_ver="7.1.5"
-#颜色信息
-Green_font_prefix="\033[32m" && Red_font_prefix="\033[31m" && Green_background_prefix="\033[42;37m" && Red_background_prefix="\033[41;37m" && Font_color_suffix="\033[0m"
-Info="${Green_font_prefix}[信息]${Font_color_suffix}" && Error="${Red_font_prefix}[错误]${Font_color_suffix}" && Tip="${Green_font_prefix}[注意]${Font_color_suffix}"
-red='\033[0;31m' && green='\033[0;32m' && yellow='\033[0;33m' && plain='\033[0m'
-#check root
-[ $(id -u) != "0" ] && { echo -e "${Error}: 您必须以root用户运行此脚本"; exit 1; }
+sh_ver="7.2.7"
 
+#颜色信息
+green_font(){
+	echo -e "\033[32m\033[01m$1\033[0m\033[37m\033[01m$2\033[0m"
+}
+red_font(){
+	echo -e "\033[31m\033[01m$1\033[0m"
+}
+white_font(){
+	echo -e "\033[37m\033[01m$1\033[0m"
+}
+yello_font(){
+	echo -e "\033[33m\033[01m$1\033[0m"
+}
+Info=`green_font [信息]` && Error=`red_font [错误]` && Tip=`yello_font [注意]`
+
+#check root
+[ $(id -u) != "0" ] && { echo -e "${Error}您必须以root用户运行此脚本"; exit 1; }
+
+######系统检测组件######
 #检查系统
 check_sys(){
 	if [[ -f /etc/redhat-release ]]; then
@@ -35,11 +49,12 @@ check_sys(){
 		version=`grep -oE  "[0-9.]+" /etc/issue | cut -d . -f 1`
 	fi
 	#检查系统安装格式
-	if [ -f "/usr/bin/yum" ] && [ -f "/etc/yum.conf" ]; then
+	if [ -f "/usr/bin/yum" ] && [ -d "/etc/yum.repos.d" ]; then
 		PM="yum"
 	elif [ -f "/usr/bin/apt-get" ] && [ -f "/usr/bin/dpkg" ]; then
 		PM="apt-get"		
 	fi
+	bit=`uname -m`
 	myinfo="企鹅号:3450633979"
 }
 #获取IP
@@ -85,7 +100,7 @@ add_firewall(){
 	fi
 }
 add_firewall_base(){
-	ssh_port=$(cat /etc/ssh/sshd_config|grep 'Port '|head -1|awk -F ' ' '{print $2}')
+	ssh_port=$(cat /etc/ssh/sshd_config |grep 'Port ' |awk -F ' ' '{print $2}')
 	if [[ ${release} == "centos" &&  ${version} -ge "7" ]]; then
 		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/tcp > /dev/null 2>&1
 		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/udp > /dev/null 2>&1
@@ -125,7 +140,7 @@ delete_firewall(){
 #安装Docker
 install_docker(){
 	#安装docker
-	if [ -x "$(command -v docker)" ]; then
+	if type docker >/dev/null 2>&1; then
 		echo -e "${Info}您的系统已安装docker"
 	else
 		${PM} --fix-broken install
@@ -135,7 +150,7 @@ install_docker(){
 		systemctl enable docker 
 	fi
 	#安装Docker环境
-	if [ -x "$(command -v docker-compose)" ]; then
+	if type docker-compose >/dev/null 2>&1; then
 		echo -e "${Info}系统已存在Docker环境"
 	else
 		echo -e "${Info}正在安装Docker环境..."
@@ -149,16 +164,27 @@ manage_v2ray(){
 	v2ray_info(){
 		sed -i "s#ps\":.*,#ps\": \"${myinfo}\",#g" $(cat /root/test/v2raypath)
 		clear
-		v2ray info
+		if [[ $1 == '1' ]]; then
+			i=$[${i}+1]
+			start=$(v2ray info |grep -Fxn ${i}. |awk -F: '{print $1}')
+			if [[ $i == "${num}" ]]; then
+				end=$(v2ray info |grep -wn Tip: |awk -F: '{print $1}')
+			else
+				end=$(v2ray info |grep -Fxn $[${i}+1]. |awk -F: '{print $1}')
+			fi
+			v2ray info | sed -n "${start},$[${end}-1]p"
+		else
+			v2ray info
+		fi
 	}
 	change_uuid(){
 		clear
 		num=$(jq ".inbounds | length" /etc/v2ray/config.json)
-		echo -e "\n${Info}当前用户总数：${Red_font_prefix}${num}${Font_color_suffix}\n"
+		echo -e "\n${Info}当前用户总数：$(red_font $num)\n"
 		unset i
 		until [[ "${i}" -ge "1" && "${i}" -le "${num}" ]]
 		do
-			stty erase ^H && read -p "请输入要修改的用户序号 [1-${num}]:" i
+			read -p "请输入要修改的用户序号[1-${num}]：" i
 		done
 		i=$[${i}-1]
 		uuid1=$(jq -r ".inbounds[${i}].settings.clients[0].id" /etc/v2ray/config.json)
@@ -166,16 +192,21 @@ manage_v2ray(){
 		sed -i "s#${uuid1}#${uuid2}#g" /etc/v2ray/config.json
 		clear
 		v2ray restart
-		v2ray_info
-		echo && echo -e "	————胖波比————
- —————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续更改UUID
- ${Green_font_prefix}2.${Font_color_suffix} 返回V2Ray用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
-		[ -z "${num}" ] && num=1
+		v2ray_info '1'
+		white_font '      ————胖波比————'
+		yello_font '——————————————————————————'
+		green_font ' 1.' '  继续更改UUID'
+		yello_font '——————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 2.' '  返回V2Ray用户管理页'
+		green_font ' 3.' '  退出脚本'
+		yello_font "——————————————————————————\n"
+		read -p "请输入数字[0-3](默认:3)：" num
+		[ -z "${num}" ] && num=3
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			change_uuid
 			;;
@@ -187,7 +218,7 @@ manage_v2ray(){
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-3]:"
+			echo -e "${Error}请输入正确数字 [0-3]"
 			sleep 2s
 			manage_v2ray_user
 			;;
@@ -198,7 +229,7 @@ manage_v2ray(){
 		for(( i = 0; i < ${num}; i++ ))
 		do
 			protocol=$(jq -r ".inbounds[${i}].streamSettings.network" /etc/v2ray/config.json)
-			if [[ "${protocol}" != "ws" ]]; then
+			if [[ ${protocol} != "ws" ]]; then
 				cat /etc/v2ray/config.json | jq "del(.inbounds[${i}].streamSettings.${protocol}Settings[])" | jq '.inbounds['${i}'].streamSettings.network="ws"' > /root/test/temp.json
 				temppath="/$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 8)/"
 				cat /root/test/temp.json | jq '.inbounds['${i}'].streamSettings.wsSettings.path="'${temppath}'"' | jq '.inbounds['${i}'].streamSettings.wsSettings.headers.Host="www.bilibili.com"' > /etc/v2ray/config.json
@@ -206,7 +237,7 @@ manage_v2ray(){
 		done
 		v2ray restart
 		clear
-		v2ray_info
+		v2ray_info '2'
 		echo -e "\n${Info}按任意键返回V2Ray用户管理页..."
 		char=`get_char`
 		manage_v2ray_user
@@ -214,16 +245,21 @@ manage_v2ray(){
 	set_tfo(){
 		set_tfo_single(){
 			v2ray tfo
-			v2ray_info
-			echo && echo -e "	————胖波比————
- —————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续设置TcpFastOpen
- ${Green_font_prefix}2.${Font_color_suffix} 返回V2Ray用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-3](默认:2)：" num
+			v2ray_info '2'
+			white_font "\n	————胖波比————\n"
+			yello_font '——————————————————————————'
+			green_font ' 1.' '  继续设置TcpFastOpen'
+			yello_font '——————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 2.' '  返回V2Ray用户管理页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "——————————————————————————\n"
+			read -p "请输入数字[1-3](默认:2)：" num
 			[ -z "${num}" ] && num=2
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				set_tfo_single
 				;;
@@ -235,7 +271,7 @@ manage_v2ray(){
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]:"
+				echo -e "${Error}请输入正确数字 [1-3]"
 				sleep 2s
 				set_tfo_menu
 				;;
@@ -250,23 +286,28 @@ manage_v2ray(){
 			done
 			v2ray restart
 			clear
-			v2ray_info
+			v2ray_info '2'
 			echo -e "\n${Info}按任意键返回V2Ray用户管理页..."
 			char=`get_char`
 			manage_v2ray_user
 		}
 		set_tfo_menu(){
 			clear
-			echo && echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 逐个设置
- ${Green_font_prefix}2.${Font_color_suffix} 全部设置
- ${Green_font_prefix}3.${Font_color_suffix} 返回V2Ray用户管理页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
- —————————————————————" && echo
-			stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-			[ -z "${num}" ] && num=4
+			white_font "\n    ————胖波比————\n"
+			yello_font '——————————————————————————'
+			green_font ' 1.' '  逐个设置'
+			green_font ' 2.' '  全部设置'
+			yello_font '——————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  返回V2Ray用户管理页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "——————————————————————————\n"
+			read -p "请输入数字[0-4](默认:3)：" num
+			[ -z "${num}" ] && num=3
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				set_tfo_single
 				;;
@@ -281,7 +322,7 @@ manage_v2ray(){
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]:"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				set_tfo_menu
 				;;
@@ -292,20 +333,25 @@ manage_v2ray(){
 	add_user_v2ray(){
 		add_v2ray_single(){
 			clear
-			echo -e "\n${Info}当前用户总数：${Red_font_prefix}$(jq ".inbounds | length" /etc/v2ray/config.json)${Font_color_suffix}\n"
+			i=$(jq ".inbounds | length" /etc/v2ray/config.json)
+			echo -e "\n${Info}当前用户总数：$(red_font ${i})\n"
 			v2ray add
 			firewall_restart
-			v2ray_info
-			echo -e "
-   ————胖波比————
-——————————————————————
-${Green_font_prefix}1.${Font_color_suffix} 继续添加用户
-${Green_font_prefix}2.${Font_color_suffix} 返回V2Ray用户管理页
-${Green_font_prefix}3.${Font_color_suffix} 退出脚本
-——————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
+			v2ray_info '1'
+			white_font '     ————胖波比————'
+			yello_font '——————————————————————————'
+			green_font ' 1.' '  继续添加用户'
+			yello_font '——————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 2.' '  返回V2Ray用户管理页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "——————————————————————————\n"
+			read -p "请输入数字[0-3](默认:1)：" num
 			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				add_v2ray_single
 				;;
@@ -317,7 +363,7 @@ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]:"
+				echo -e "${Error}请输入正确数字 [0-3]"
 				sleep 2s
 				manage_v2ray_user
 				;;
@@ -325,32 +371,36 @@ ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
 		}
 		add_v2ray_multi(){
 			clear
-			echo -e "\n${Info}当前用户总数：${Red_font_prefix}$(jq ".inbounds | length" /etc/v2ray/config.json)${Font_color_suffix}\n"
-			stty erase ^H && read -p "请输入要添加的用户个数(默认:1)：" num
+			echo -e "\n${Info}当前用户总数：$(red_font $(jq ".inbounds | length" /etc/v2ray/config.json))\n"
+			read -p "请输入要添加的用户个数(默认:1)：" num
 			[ -z "${num}" ] && num=1
 			for(( i = 0; i < ${num}; i++ ))
 			do
 				echo | v2ray add
 			done
 			firewall_restart
-			v2ray_info
+			v2ray_info '2'
 			echo -e "\n${Info}按任意键返回V2Ray用户管理页..."
 			char=`get_char`
 			manage_v2ray_user
 		}
 		add_v2ray_menu(){
 			clear
-			echo -e "
-   ————胖波比————
-—————————————————————
-${Green_font_prefix}1.${Font_color_suffix} 逐个添加
-${Green_font_prefix}2.${Font_color_suffix} 批量添加
-${Green_font_prefix}3.${Font_color_suffix} 返回V2Ray用户管理页
-${Green_font_prefix}4.${Font_color_suffix} 退出脚本
-—————————————————————" && echo
-			stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-			[ -z "${num}" ] && num=4
+			white_font "\n    ————胖波比————\n"
+			yello_font '——————————————————————————'
+			green_font ' 1.' '  逐个添加'
+			green_font ' 2.' '  批量添加'
+			yello_font '——————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  返回V2Ray用户管理页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "——————————————————————————\n"
+			read -p "请输入数字[0-4](默认:2)：" num
+			[ -z "${num}" ] && num=2
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				add_v2ray_single
 				;;
@@ -365,7 +415,7 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]:"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				add_v2ray_menu
 				;;
@@ -375,34 +425,40 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 	}
 	manage_v2ray_user(){
 		clear
-		echo && echo -e "   V2Ray用户管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	  -- 胖波比 --
-手动修改配置文件：vi /etc/v2ray/config.json
-
-————————V2Ray用户管理————————
-${Green_font_prefix}1.${Font_color_suffix} 更改UUID
-${Green_font_prefix}2.${Font_color_suffix} 查看用户链接
-${Green_font_prefix}3.${Font_color_suffix} 流量统计
-${Green_font_prefix}4.${Font_color_suffix} 添加用户
-${Green_font_prefix}5.${Font_color_suffix} 删除用户
-${Green_font_prefix}6.${Font_color_suffix} 更改端口
-${Green_font_prefix}7.${Font_color_suffix} 更改协议
-${Green_font_prefix}8.${Font_color_suffix} 更改TcpFastOpen
-${Green_font_prefix}9.${Font_color_suffix} 原版管理窗口
-${Green_font_prefix}10.${Font_color_suffix} 改为WebSocket传输
-${Green_font_prefix}11.${Font_color_suffix} 走cdn
-${Green_font_prefix}12.${Font_color_suffix} 更改tls
-${Green_font_prefix}13.${Font_color_suffix} 回到主页
-${Green_font_prefix}14.${Font_color_suffix} 退出脚本
-——————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-14](默认:14):" num
-		[ -z "${num}" ] && num=14
+		white_font "\n   V2Ray用户管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font '	  -- 胖波比 --'
+		white_font "手动修改配置文件：vi /etc/v2ray/config.json\n"
+		yello_font '——————————————————————————'
+		green_font ' 1.' '  更改UUID'
+		green_font ' 2.' '  查看用户链接'
+		green_font ' 3.' '  流量统计'
+		yello_font '——————————————————————————'
+		green_font ' 4.' '  添加用户'
+		green_font ' 5.' '  删除用户'
+		green_font ' 6.' '  更改端口'
+		green_font ' 7.' '  更改协议'
+		yello_font '——————————————————————————'
+		green_font ' 8.' '  设置TcpFastOpen'
+		green_font ' 9.' '  设置WebSocket传输'
+		green_font ' 10.' ' 原版管理窗口'
+		green_font ' 11.' ' 设置CDN'
+		green_font ' 12.' ' 设置TLS'
+		yello_font '——————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 13.' ' 返回上页'
+		green_font ' 14.' ' 退出脚本'
+		yello_font "——————————————————————————\n"
+		read -p "请输入数字[0-14](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			change_uuid
 			;;
 			2)
-			v2ray_info
+			v2ray_info '2'
 			echo -e "${Info}按任意键继续..."
 			char=`get_char`
 			;;
@@ -425,11 +481,11 @@ ${Green_font_prefix}14.${Font_color_suffix} 退出脚本
 			set_tfo
 			;;
 			9)
-			clear
-			v2ray
+			change_ws
 			;;
 			10)
-			change_ws
+			clear
+			v2ray
 			;;
 			11)
 			v2ray cdn
@@ -438,14 +494,14 @@ ${Green_font_prefix}14.${Font_color_suffix} 退出脚本
 			v2ray tls
 			;;
 			13)
-			start_menu_main
+			start_menu_v2ray
 			;;
 			14)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-14]"
+			echo -e "${Error}请输入正确数字 [0-14]"
 			sleep 2s
 			manage_v2ray_user
 			;;
@@ -470,24 +526,29 @@ ${Green_font_prefix}14.${Font_color_suffix} 退出脚本
 	start_menu_v2ray(){
 		v2ray_url="https://multi.netlify.com/v2ray.sh"
 		clear
-		echo && echo -e " V2Ray一键安装脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-
-—————————V2Ray安装—————————
-${Green_font_prefix}1.${Font_color_suffix} 管理V2Ray用户
-${Green_font_prefix}2.${Font_color_suffix} 安装V2Ray
-${Green_font_prefix}3.${Font_color_suffix} 修复V2Ray
-${Green_font_prefix}4.${Font_color_suffix} 卸载V2Ray
-${Green_font_prefix}5.${Font_color_suffix} 重启V2Ray
-${Green_font_prefix}6.${Font_color_suffix} 关闭V2Ray
-${Green_font_prefix}7.${Font_color_suffix} 启动V2Ray
-${Green_font_prefix}8.${Font_color_suffix} 查看V2Ray状态
-${Green_font_prefix}9.${Font_color_suffix} 回到主页
-${Green_font_prefix}10.${Font_color_suffix} 退出脚本
-———————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-10](默认:10):" num
-		[ -z "${num}" ] && num=10
+		white_font "\n V2Ray一键安装脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '——————————————————————————'
+		green_font ' 1.' '  管理V2Ray用户'
+		yello_font '——————————————————————————'
+		green_font ' 2.' '  安装V2Ray'
+		green_font ' 3.' '  修复V2Ray'
+		green_font ' 4.' '  卸载V2Ray'
+		yello_font '——————————————————————————'
+		green_font ' 5.' '  重启V2Ray'
+		green_font ' 6.' '  关闭V2Ray'
+		green_font ' 7.' '  启动V2Ray'
+		green_font ' 8.' '  查看V2Ray状态'
+		yello_font '——————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 9.' '  退出脚本'
+		yello_font "——————————————————————————\n"
+		read -p "请输入数字[1-10](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			manage_v2ray_user
 			;;
@@ -515,14 +576,11 @@ ${Green_font_prefix}10.${Font_color_suffix} 退出脚本
 			v2ray status
 			;;
 			9)
-			start_menu_main
-			;;
-			10)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-10]"
+			echo -e "${Error}请输入正确数字 [0-9]"
 			sleep 2s
 			start_menu_v2ray
 			;;
@@ -534,7 +592,6 @@ ${Green_font_prefix}10.${Font_color_suffix} 退出脚本
 
 #安装SSR
 install_ssr(){
-	clear
 	libsodium_file="libsodium-1.0.17"
 	libsodium_url="https://github.com/jedisct1/libsodium/releases/download/1.0.17/libsodium-1.0.17.tar.gz"
 	shadowsocks_r_file="shadowsocksr-3.2.2"
@@ -542,7 +599,7 @@ install_ssr(){
 
 	#Current folder
 	cur_dir=`pwd`
-	
+	red='\033[0;31m' && green='\033[0;32m' && plain='\033[0m'
 	# Reference URL:
 	# https://github.com/shadowsocksr-rm/shadowsocks-rss/blob/master/ssr.md
 	# https://github.com/shadowsocksrr/shadowsocksr/commit/a3cf0254508992b7126ab1151df0c2f10bf82680
@@ -651,7 +708,7 @@ install_ssr(){
 			hint="${ciphers[$i-1]}"
 			echo -e "${green}${i}${plain}) ${hint}"
 		done
-		stty erase ^H && read -p "Which cipher you'd select(默认: ${ciphers[1]}):" pick
+		read -p "Which cipher you'd select(默认: ${ciphers[1]}):" pick
 		[ -z "$pick" ] && pick=2
 		expr ${pick} + 1 &>/dev/null
 		if [ $? -ne 0 ]; then
@@ -695,7 +752,7 @@ install_ssr(){
 			hint="${protocols[$i-1]}"
 			echo -e "${green}${i}${plain}) ${hint}"
 		done
-		stty erase ^H && read -p "Which protocol you'd select(默认: ${protocols[3]}):" protocol
+		read -p "Which protocol you'd select(默认: ${protocols[3]}):" protocol
 		[ -z "$protocol" ] && protocol=4
 		expr ${protocol} + 1 &>/dev/null
 		if [ $? -ne 0 ]; then
@@ -736,7 +793,7 @@ install_ssr(){
 			hint="${obfs[$i-1]}"
 			echo -e "${green}${i}${plain}) ${hint}"
 		done
-		stty erase ^H && read -p "Which obfs you'd select(默认: ${obfs[2]}):" r_obfs
+		read -p "Which obfs you'd select(默认: ${obfs[2]}):" r_obfs
 		[ -z "$r_obfs" ] && r_obfs=3
 		expr ${r_obfs} + 1 &>/dev/null
 		if [ $? -ne 0 ]; then
@@ -771,7 +828,7 @@ install_ssr(){
 		fi
 		# Set ShadowsocksR config password
 		echo -e "${Info}请设置ShadowsocksR密码:"
-		stty erase ^H && read -p "(默认密码: pangbobi):" password
+		read -p "(默认密码: pangbobi):" password
 		[ -z "${password}" ] && password="pangbobi"
 		echo
 		echo "---------------------------"
@@ -783,7 +840,7 @@ install_ssr(){
 		do
 		dport=$(shuf -i 1000-9999 -n 1)
 		echo -e "${Info}请设置ShadowsocksR端口[1-65535]:"
-		stty erase ^H && read -p "(默认随机端口: ${dport}):" port
+		read -p "(默认随机端口: ${dport}):" port
 		[ -z "${port}" ] && port=${dport}
 		expr ${port} + 1 &>/dev/null
 		if [ $? -eq 0 ]; then
@@ -900,7 +957,6 @@ EOF
 			install_cleanup
 			get_info
 			set_ssrurl
-			echo
 			echo -e "Congratulations, ShadowsocksR server install completed!"
 			echo -e "Your Server IP        : \033[41;37m $(get_ip) \033[0m"
 			echo -e "Your Server Port      : \033[41;37m ${port} \033[0m"
@@ -908,36 +964,34 @@ EOF
 			echo -e "Your Protocol         : \033[41;37m ${protocol} \033[0m"
 			echo -e "Your obfs             : \033[41;37m ${obfs} \033[0m"
 			echo -e "Your Encryption Method: \033[41;37m ${method} \033[0m"
-			echo "
-	Enjoy it!
-	请记录你的SSR信息"
-			echo -e "
-————————————胖波比————————————
- ${Green_font_prefix}1.${Font_color_suffix} 进入SSR用户管理页
- ${Green_font_prefix}2.${Font_color_suffix} 回到主页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
-——————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-3](默认:3):" num
-			[ -z "${num}" ] && num=3
+			white_font "\n	Enjoy it!\n	请记录你的SSR信息!\n"
+			yello_font '——————————胖波比—————————'
+			green_font ' 1.' '  进入SSR用户管理页'
+			yello_font '—————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 2.' '  退出脚本'
+			yello_font "—————————————————————————\n"
+			read -p "请输入数字[0-2](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				manage_ssr
 				;;
 				2)
-				start_menu_main
-				;;
-				3)
 				exit 1
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]"
+				echo -e "${Error}请输入正确数字 [0-2]"
 				sleep 2s
 				start_menu_main
 				;;
 			esac
 		else
-			echo -e "${Error}:ShadowsocksR install failed, please Email to Teddysun <i@teddysun.com> and contact"
+			echo -e "${Error}ShadowsocksR install failed, please Email to Teddysun <i@teddysun.com> and contact"
 			install_cleanup
 			exit 1
 		fi
@@ -946,7 +1000,7 @@ EOF
 	uninstall_shadowsocksr(){
 		printf "Are you sure uninstall ShadowsocksR? (y/n)"
 		printf "\n"
-		stty erase ^H && read -p "(Default: n):" answer
+		read -p "(Default: n):" answer
 		[ -z ${answer} ] && answer="n"
 		if [ "${answer}" == "y" ] || [ "${answer}" == "Y" ]; then
 			/etc/init.d/shadowsocks status > /dev/null 2>&1
@@ -999,16 +1053,6 @@ EOF
 		Remarksbase64=$(urlsafe_base64 "${myinfo}")
 		Groupbase64=$(urlsafe_base64 "我们爱中国")
 	}
-	#读取端口密码
-	get_pp(){
-		cat > /root/test/ppj<<-EOF
-$(jq '.port_password' /etc/shadowsocks.json)
-EOF
-		pp=$(jq -r "to_entries|map(\"\(.key):\(.value|tostring)\")|.[]" /root/test/ppj)
-		cat > /root/test/ppj<<-EOF
-${pp}
-EOF
-	}
 	#生成SSR链接
 	set_ssrurl(){
 		SSRPWDbase64=$(urlsafe_base64 "${password}")
@@ -1017,28 +1061,28 @@ EOF
 		service shadowsocks restart
 		clear
 		#输出链接
-		echo -e "\n${Info}端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
-		echo -e "${Info}SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+		echo -e "\n${Info}端口：$(red_font $port)   密码：$(red_font $password)"
+		echo -e "${Info}SSR链接：$(red_font $SSRurl)\n"
 	}
 	#查看所有链接
 	view_ssrurl(){
 		clear
-		get_pp
+		jq '.port_password' /etc/shadowsocks.json | sed '1d' | sed '$d' | sed 's#"##g' | sed 's# ##g' | sed 's#,##g' > /root/test/ppj
 		cat /root/test/ppj | while read line; do
 			port=`echo $line|awk -F ':' '{print $1}'`
 			password=`echo $line|awk -F ':' '{print $2}'`
-			echo -e "端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
+			echo -e "端口：$(red_font $port)   密码：$(red_font $password)"
 			SSRPWDbase64=$(urlsafe_base64 "${password}")
 			SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
 			SSRurl="ssr://${SSRbase64}"
-			echo -e "SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+			echo -e "SSR链接 ：$(red_font $SSRurl)\n"
 		done
-		echo -e "服务器IP    ：${Red_font_prefix}$(get_ip)${Font_color_suffix}"
-		echo -e "加密方式    ：${Red_font_prefix}${method}${Font_color_suffix}"
-		echo -e "协议        ：${Red_font_prefix}${protocol}${Font_color_suffix}"
-		echo -e "混淆        ：${Red_font_prefix}${obfs}${Font_color_suffix}"
-		echo -e "当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
-		if [[ "${testmpo}" == "1" ]]; then
+		echo -e "服务器IP    ：$(red_font $(get_ip))"
+		echo -e "加密方式    ：$(red_font $method)"
+		echo -e "协议        ：$(red_font $protocol)"
+		echo -e "混淆        ：$(red_font $obfs)"
+		echo -e "当前用户总数：$(red_font $(jq '.port_password | length' /etc/shadowsocks.json))\n"
+		if [[ $1 == "1" ]]; then
 			service shadowsocks restart
 			echo -e "${Info}SSR已重启！"
 		fi
@@ -1057,7 +1101,7 @@ EOF
 			unset port
 			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
 			do
-				stty erase ^H && read -p "请输入要改密的端口号：" port
+				read -p "请输入要改密的端口号：" port
 			done
 			password1=$(jq -r '.port_password."'${port}'"' /etc/shadowsocks.json)
 			password=$(openssl rand -base64 6)
@@ -1065,15 +1109,20 @@ EOF
 			sed -i "${et}s#${password1}#${password}#g" /etc/shadowsocks.json
 			#调用生成链接的函数
 			set_ssrurl
-			echo -e "	————胖波比————
- —————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续更改密码
- ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
-			[ -z "${num}" ] && num=1
+			white_font "\n	 ————胖波比————\n"
+			yello_font '—————————————————————————'
+			green_font ' 1.' '  继续更改密码'
+			green_font ' 2.' '  返回SSR用户管理页'
+			yello_font '—————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "—————————————————————————\n"
+			read -p "请输入数字[0-3](默认:2)：" num
+			[ -z "${num}" ] && num=2
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				change_pw_single
 				;;
@@ -1085,7 +1134,7 @@ EOF
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]:"
+				echo -e "${Error}请输入正确数字 [0-3]"
 				sleep 2s
 				change_pw_menu
 				;;
@@ -1093,24 +1142,24 @@ EOF
 		}
 		change_pw_multi(){
 			clear
-			get_pp
+			jq '.port_password' /etc/shadowsocks.json | sed '1d' | sed '$d' | sed 's#"##g' | sed 's# ##g' | sed 's#,##g' > /root/test/ppj
 			cat /root/test/ppj | while read line; do
 				port=`echo $line|awk -F ':' '{print $1}'`
 				password1=`echo $line|awk -F ':' '{print $2}'`
 				password=$(openssl rand -base64 6)
 				et=$(sed -n -e "/${port}/=" /etc/shadowsocks.json)
 				sed -i "${et}s#${password1}#${password}#g" /etc/shadowsocks.json
-				echo -e "端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
+				echo -e "端口：$(red_font $port)   密码：$(red_font $password)"
 				SSRPWDbase64=$(urlsafe_base64 "${password}")
 				SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
 				SSRurl="ssr://${SSRbase64}"
-				echo -e "SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+				echo -e "SSR链接 : $(red_font $SSRurl)\n"
 			done
-			echo -e "服务器IP    ：${Red_font_prefix}$(get_ip)${Font_color_suffix}"
-			echo -e "加密方式    ：${Red_font_prefix}${method}${Font_color_suffix}"
-			echo -e "协议        ：${Red_font_prefix}${protocol}${Font_color_suffix}"
-			echo -e "混淆        ：${Red_font_prefix}${obfs}${Font_color_suffix}"
-			echo -e "当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			echo -e "服务器IP    ：$(red_font $(get_ip))"
+			echo -e "加密方式    ：$(red_font $method)"
+			echo -e "协议        ：$(red_font $protocol)"
+			echo -e "混淆        ：$(red_font $obfs)"
+			echo -e "当前用户总数：$(red_font $(jq '.port_password | length' /etc/shadowsocks.json))\n"
 			service shadowsocks restart
 			echo -e "${Info}SSR已重启！"
 			echo -e "${Info}按任意键回到SSR用户管理页..."
@@ -1119,16 +1168,21 @@ EOF
 		}
 		change_pw_menu(){
 			clear
-			echo && echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 逐个修改
- ${Green_font_prefix}2.${Font_color_suffix} 全部修改
- ${Green_font_prefix}3.${Font_color_suffix} 返回SSR用户管理页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
- —————————————————————" && echo
-			stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-			[ -z "${num}" ] && num=4
+			white_font "\n    ————胖波比————\n"
+			yello_font '—————————————————————————'
+			green_font ' 1.' '  逐个修改'
+			green_font ' 2.' '  全部修改'
+			green_font ' 3.' '  返回SSR用户管理页'
+			yello_font '—————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "—————————————————————————\n"
+			read -p "请输入数字[0-4](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				change_pw_single
 				;;
@@ -1143,7 +1197,7 @@ EOF
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]:"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				change_pw_menu
 				;;
@@ -1158,11 +1212,11 @@ EOF
 			clear
 			jq '.port_password' /etc/shadowsocks.json
 			echo -e "${Info}以上是配置文件的内容"
-			echo -e "${Info}当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			echo -e "${Info}当前用户总数：$(red_font $(jq '.port_password | length' /etc/shadowsocks.json))\n"
 			unset port
 			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
 			do
-				stty erase ^H && read -p "请输入要添加的端口号[1000-65535]：" port
+				read -p "请输入要添加的端口号[1000-65535]：" port
 			done
 			add_firewall
 			firewall_restart
@@ -1170,15 +1224,20 @@ EOF
 			cat /etc/shadowsocks.json | jq '.port_password."'${port}'"="'${password}'"' > /root/test/temp.json
 			cp /root/test/temp.json /etc/shadowsocks.json
 			set_ssrurl
-			echo -e "    ————胖波比————
- ——————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续添加用户
- ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- ——————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
+			white_font "     ————胖波比————\n"
+			yello_font '—————————————————————————'
+			green_font ' 1.' '  继续添加用户'
+			green_font ' 2.' '  返回SSR用户管理页'
+			yello_font '—————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "—————————————————————————\n"
+			read -p "请输入数字[0-3](默认:1)：" num
 			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				add_user_single
 				;;
@@ -1190,7 +1249,7 @@ EOF
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]:"
+				echo -e "${Error}请输入正确数字 [0-3]"
 				sleep 2s
 				manage_ssr
 				;;
@@ -1199,8 +1258,8 @@ EOF
 		#批量添加
 		add_user_multi(){
 			clear
-			echo -e "\n${Info}当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
-			stty erase ^H && read -p "请输入要添加的用户个数(默认:1)：" num
+			echo -e "\n${Info}当前用户总数：$(red_font $(jq '.port_password | length' /etc/shadowsocks.json))\n"
+			read -p "请输入要添加的用户个数(默认:1)：" num
 			[ -z "${num}" ] && num=1
 			unset port
 			for(( i = 0; i < ${num}; i++ ))
@@ -1216,13 +1275,13 @@ EOF
 				SSRPWDbase64=$(urlsafe_base64 "${password}")
 				SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
 				SSRurl="ssr://${SSRbase64}"
-				echo -e "${Info}端口：${Red_font_prefix}${port}${Font_color_suffix}   密码：${Red_font_prefix}${password}${Font_color_suffix}"
-				echo -e "${Info}SSR链接 : ${Red_font_prefix}${SSRurl}${Font_color_suffix}\n"
+				echo -e "${Info}端口：$(red_font $port)   密码：$(red_font $password)"
+				echo -e "${Info}SSR链接：$(red_font $SSRurl)\n"
 			done
 			firewall_restart
 			service shadowsocks restart
 			echo -e "${Info}SSR已重启！"
-			echo -e "${Info}当前用户总数：${Red_font_prefix}$(jq '.port_password | length' /etc/shadowsocks.json)${Font_color_suffix}\n"
+			echo -e "${Info}当前用户总数：$(red_font $(jq '.port_password | length' /etc/shadowsocks.json))\n"
 			echo -e "${Info}按任意键返回SSR用户管理页..."
 			char=`get_char`
 			manage_ssr
@@ -1230,16 +1289,21 @@ EOF
 		#添加用户菜单
 		add_user_menu(){
 			clear
-			echo && echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 逐个添加
- ${Green_font_prefix}2.${Font_color_suffix} 批量添加
- ${Green_font_prefix}3.${Font_color_suffix} 返回SSR用户管理页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
- —————————————————————" && echo
-			stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-			[ -z "${num}" ] && num=4
+			white_font "\n    ————胖波比————\n"
+			yello_font '—————————————————————————'
+			green_font ' 1.' '  逐个添加'
+			green_font ' 2.' '  批量添加'
+			green_font ' 3.' '  返回SSR用户管理页'
+			yello_font '—————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "—————————————————————————\n"
+			read -p "请输入数字[0-4](默认:2)：" num
+			[ -z "${num}" ] && num=2
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				add_user_single
 				;;
@@ -1254,7 +1318,7 @@ EOF
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]:"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				add_user_menu
 				;;
@@ -1270,7 +1334,7 @@ EOF
 			unset port
 			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
 			do
-				stty erase ^H && read -p "请输入要删除的端口:" port
+				read -p "请输入要删除的端口:" port
 			done
 			cat /etc/shadowsocks.json | jq 'del(.port_password."'${port}'")' > /root/test/temp.json
 			cp /root/test/temp.json /etc/shadowsocks.json
@@ -1281,15 +1345,20 @@ EOF
 			echo -e "${Info}SSR已重启！"
 			sleep 2s
 			clear
-			echo && echo -e "	————胖波比————
- —————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续删除用户
- ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————"
-			stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
+			white_font "\n    ————胖波比————\n"
+			yello_font '—————————————————————————'
+			green_font ' 1.' '  继续删除用户'
+			green_font ' 2.' '  返回SSR用户管理页'
+			yello_font '—————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "—————————————————————————\n"
+			read -p "请输入数字[0-3](默认:1)：" num
 			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				delete_user_single
 				;;
@@ -1301,7 +1370,7 @@ EOF
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]:"
+				echo -e "${Error}请输入正确数字 [0-3]"
 				sleep 2s
 				manage_ssr
 				;;
@@ -1309,7 +1378,7 @@ EOF
 		}
 		delete_user_multi(){
 			clear
-			get_pp
+			jq '.port_password' /etc/shadowsocks.json | sed '1d' | sed '$d' | sed 's#"##g' | sed 's# ##g' | sed 's#,##g' > /root/test/ppj
 			cat /root/test/ppj | while read line; do
 				port=`echo $line|awk -F ':' '{print $1}'`
 				delete_firewall
@@ -1324,16 +1393,21 @@ EOF
 		}
 		delete_user_menu(){
 			clear
-			echo && echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 逐个删除
- ${Green_font_prefix}2.${Font_color_suffix} 全部删除
- ${Green_font_prefix}3.${Font_color_suffix} 返回SSR用户管理页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
- —————————————————————" && echo
-			stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-			[ -z "${num}" ] && num=4
+			white_font "\n    ————胖波比————\n"
+			yello_font '—————————————————————————'
+			green_font ' 1.' '  逐个删除'
+			green_font ' 2.' '  全部删除'
+			green_font ' 3.' '  返回SSR用户管理页'
+			yello_font '—————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "—————————————————————————\n"
+			read -p "请输入数字[0-4](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				delete_user_single
 				;;
@@ -1348,7 +1422,7 @@ EOF
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]:"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				delete_user_menu
 				;;
@@ -1359,34 +1433,39 @@ EOF
 	#更改端口
 	change_port(){
 		clear
-		get_pp
+		jq '.port_password' /etc/shadowsocks.json | sed '1d' | sed '$d' | sed 's#"##g' | sed 's# ##g' | sed 's#,##g' > /root/test/ppj
 		jq '.port_password' /etc/shadowsocks.json
 		echo -e "${Info}以上是配置文件的内容\n"
 		unset port
 		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
 		do
-			stty erase ^H && read -p "请输入要修改的端口号：" port
+			read -p "请输入要修改的端口号：" port
 		done
 		password=$(cat /root/test/ppj | grep "${port}:" | awk -F ':' '{print $2}')
 		delete_firewall
 		port1=${port}
 		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
 		do
-			stty erase ^H && read -p "请输入修改后的端口[1000-65535]:" port
+			read -p "请输入修改后的端口[1000-65535]：" port
 		done
 		add_firewall
 		firewall_restart
 		sed -i "s/${port1}/${port}/g"  /etc/shadowsocks.json
 		set_ssrurl
-		echo -e "	————胖波比————
- ———————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续更改端口
- ${Green_font_prefix}2.${Font_color_suffix} 返回SSR用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- ———————————————————————————"
-		stty erase ^H && read -p "请输入数字 [1-3](默认:3)：" num
-		[ -z "${num}" ] && num=3
+		white_font "     ————胖波比————\n"
+		yello_font '—————————————————————————'
+		green_font ' 1.' '  继续更改端口'
+		green_font ' 2.' '  返回SSR用户管理页'
+		yello_font '—————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 3.' '  退出脚本'
+		yello_font "—————————————————————————\n"
+		read -p "请输入数字[0-3](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			change_port
 			;;
@@ -1398,7 +1477,7 @@ EOF
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-3]:"
+			echo -e "${Error}请输入正确数字 [0-3]"
 			sleep 2s
 			manage_ssr
 			;;
@@ -1409,8 +1488,7 @@ EOF
 		method1=$(jq -r '.method' /etc/shadowsocks.json)
 		set_method
 		sed -i "s/${method1}/${method}/g"  /etc/shadowsocks.json
-		testmpo=1
-		view_ssrurl
+		view_ssrurl '1'
 	}
 	#更改协议
 	change_protocol(){
@@ -1418,8 +1496,7 @@ EOF
 		set_protocol
 		sed -i "s/${protocol1}/${protocol}/g"  /etc/shadowsocks.json
 		SSRprotocol=$(echo ${protocol} | sed 's/_compatible//g')
-		testmpo=1
-		view_ssrurl
+		view_ssrurl '1'
 	}
 	#更改混淆
 	change_obfs(){
@@ -1427,39 +1504,42 @@ EOF
 		set_obfs
 		sed -i "s/${obfs1}/${obfs}/g"  /etc/shadowsocks.json
 		SSRobfs=$(echo ${obfs} | sed 's/_compatible//g')
-		testmpo=1
-		view_ssrurl
+		view_ssrurl '1'
 	}
 	
 	#管理SSR配置
 	manage_ssr(){
 		clear
 		get_info
-		echo && echo -e "   SSR用户管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	  -- 胖波比 --
-手动修改配置文件：vi /etc/shadowsocks.json
-		
-—————————SSR用户管理——————————
- ${Green_font_prefix}1.${Font_color_suffix} 更改密码
- ${Green_font_prefix}2.${Font_color_suffix} 查看用户链接
- ${Green_font_prefix}3.${Font_color_suffix} 添加用户
- ${Green_font_prefix}4.${Font_color_suffix} 删除用户
- ${Green_font_prefix}5.${Font_color_suffix} 更改端口
- ${Green_font_prefix}6.${Font_color_suffix} 更改加密
- ${Green_font_prefix}7.${Font_color_suffix} 更改协议
- ${Green_font_prefix}8.${Font_color_suffix} 更改混淆
- ${Green_font_prefix}9.${Font_color_suffix} 回到主页
- ${Green_font_prefix}10.${Font_color_suffix} 退出脚本
-——————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-10](默认:10):" num
-		[ -z "${num}" ] && num=10
+		white_font "\n   SSR用户管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font '	  -- 胖波比 --'
+		white_font "手动修改配置文件：vi /etc/shadowsocks.json\n"
+		yello_font '———————SSR用户管理———————'
+		green_font ' 1.' '  更改密码'
+		green_font ' 2.' '  查看用户链接'
+		yello_font '—————————————————————————'
+		green_font ' 3.' '  添加用户'
+		green_font ' 4.' '  删除用户'
+		yello_font '—————————————————————————'
+		green_font ' 5.' '  更改端口'
+		green_font ' 6.' '  更改加密'
+		green_font ' 7.' '  更改协议'
+		green_font ' 8.' '  更改混淆'
+		yello_font '—————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 9.' '  退出脚本'
+		yello_font "—————————————————————————\n"
+		read -p "请输入数字[0-9](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			change_pw
 			;;
 			2)
-			testmpo=2
-			view_ssrurl
+			view_ssrurl '2'
 			;;
 			3)
 			add_user
@@ -1480,14 +1560,11 @@ EOF
 			change_obfs
 			;;
 			9)
-			start_menu_main
-			;;
-			10)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-10]"
+			echo -e "${Error}请输入正确数字 [0-9]"
 			sleep 2s
 			manage_ssr
 			;;
@@ -1496,28 +1573,34 @@ EOF
 	
 	# Initialization step
 	start_menu_ssr(){
-		echo && echo -e " SSR一键安装脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-    -- 胖波比 --
-		
-——————————SSR安装——————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装SSR
- ${Green_font_prefix}2.${Font_color_suffix} 管理SSR用户
- ${Green_font_prefix}3.${Font_color_suffix} 卸载SSR
- ${Green_font_prefix}4.${Font_color_suffix} 重启SSR
- ${Green_font_prefix}5.${Font_color_suffix} 关闭SSR
- ${Green_font_prefix}6.${Font_color_suffix} 启动SSR
- ${Green_font_prefix}7.${Font_color_suffix} 查看SSR状态
- ${Green_font_prefix}8.${Font_color_suffix} 回到主页
- ${Green_font_prefix}9.${Font_color_suffix} 退出脚本
-———————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-9](默认:9):" num
-		[ -z "${num}" ] && num=9
+		clear
+		white_font "\n SSR一键安装脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	 -- 胖波比 --\n"
+		yello_font '—————————SSR安装—————————'
+		green_font ' 1.' '  管理SSR用户'
+		yello_font '—————————————————————————'
+		green_font ' 2.' '  安装SSR'
+		green_font ' 3.' '  卸载SSR'
+		yello_font '—————————————————————————'
+		green_font ' 4.' '  重启SSR'
+		green_font ' 5.' '  关闭SSR'
+		green_font ' 6.' '  启动SSR'
+		green_font ' 7.' '  查看SSR状态'
+		yello_font '—————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "—————————————————————————\n"
+		read -p "请输入数字[0-8](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
-			install_shadowsocksr
+			manage_ssr
 			;;
 			2)
-			manage_ssr
+			install_shadowsocksr
 			;;
 			3)
 			uninstall_shadowsocksr
@@ -1535,14 +1618,11 @@ EOF
 			service shadowsocks status
 			;;
 			8)
-			start_menu_main
-			;;
-			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-9]"
+			echo -e "${Error}请输入正确数字 [0-8]"
 			sleep 2s
 			start_menu_ssr
 			;;
@@ -1554,43 +1634,41 @@ EOF
 #安装Trojan
 manage_trojan(){
 	choose_letsencrypt(){
-		clear
 		letsencrypt_ip(){
-			clear
+			clear && cd /root/certificate
 			ydomain=$(get_ip)
 			echo -e "${Info}即将生成证书,输入假信息即可,任意键继续..."
 			char=`get_char`
-			openssl req -newkey rsa:2048 -nodes -keyout privkey.pem -x509 -days 3650 -out certificate.pem
+			openssl req -newkey rsa:2048 -nodes -keyout private.key -x509 -days 3650 -out fullchain.cer
 		}
 		letsencrypt_enc(){
 			clear && cd /root
-			if [ ! -d /root/letsencrypt ]; then
-				git clone https://github.com/letsencrypt/letsencrypt
+			if [ ! -e /root/test/acme ]; then
+				curl https://raw.githubusercontent.com/Neilpang/acme.sh/master/acme.sh | INSTALLONLINE=1 sh
+				/root/.acme.sh/acme.sh --upgrade --auto-upgrade
+				touch /root/test/acme
 			fi
-			cd letsencrypt
-			stty erase ^H && read -p "请输入已解析成功的域名：" ydomain
-			rm -rf /etc/letsencrypt/live/${ydomain}*
-			rm -rf /etc/letsencrypt/archive/${ydomain}
-			rm -f /etc/letsencrypt/renewal/${ydomain}.conf
-			stty erase ^H && read -p "请输入真实邮箱：" yemail
-			echo "a y"|sh ./letsencrypt-auto certonly --standalone -d ${ydomain} --email ${yemail}
-			chmod -R 755 /etc/letsencrypt
-			cp /etc/letsencrypt/live/${ydomain}/fullchain.pem /usr/local/trojan/certificate.pem
-			cp /etc/letsencrypt/live/${ydomain}/privkey.pem /usr/local/trojan/privkey.pem
-			cd /usr/local/trojan
+			read -p "请输入已解析成功的域名：" ydomain
+			/root/.acme.sh/acme.sh --issue -d ${ydomain} --standalone
+			/root/.acme.sh/acme.sh --installcert -d ${ydomain} --fullchain-file /root/certificate/fullchain.cer --key-file /root/certificate/private.key --reloadcmd "systemctl restart trojan"
 		}
-		echo && echo -e "   Trojan证书管理脚本
-	  -- 胖波比 --
-
-————————Trojan用户管理————————
- ${Green_font_prefix}1.${Font_color_suffix} 使用IP自签发证书
- ${Green_font_prefix}2.${Font_color_suffix} 使用Let's Encrypt域名证书
- ${Green_font_prefix}3.${Font_color_suffix} 回到主页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
-——————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-4](默认:1):" num
+		clear
+		white_font "\n   Trojan证书管理脚本"
+		white_font "	  -- 胖波比 --\n"
+		yello_font '————————Trojan用户管理————————'
+		green_font ' 1.' '  使用IP自签发证书'
+		green_font ' 2.' '  使用acme.sh域名证书'
+		yello_font '——————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 3.' '  返回上页'
+		green_font ' 4.' '  退出脚本'
+		yello_font "——————————————————————————————\n"
+		read -p "请输入数字[0-4](默认:1)：" num
 		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			letsencrypt_ip
 			;;
@@ -1598,14 +1676,14 @@ manage_trojan(){
 			letsencrypt_enc
 			;;
 			3)
-			start_menu_main
+			start_menu_trojan
 			;;
 			4)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-4]"
+			echo -e "${Error}请输入正确数字 [0-4]"
 			sleep 2s
 			choose_letsencrypt
 			;;
@@ -1613,11 +1691,10 @@ manage_trojan(){
 	}
 	install_trojan(){
 		if [ ! -e /root/test/trojan ]; then
-			port=80
-			add_firewall
 			port=443
 			add_firewall
 			firewall_restart
+			mkdir -p /root/certificate
 			touch /root/test/trojan
 		fi
 		cd /usr/local
@@ -1634,33 +1711,31 @@ manage_trojan(){
 		password=$(cat /proc/sys/kernel/random/uuid)
 		sed -i "s#password2#${password}#g" /etc/trojan.json
 		sed -i 's#open": false#open": true#g' /etc/trojan.json
-		cp examples/client.json-example /root/test/config.json
-		sed -i 's#open": false#open": true#g' /root/test/config.json
+		cp examples/client.json-example /root/certificate/config.json
+		sed -i 's#open": false#open": true#g' /root/certificate/config.json
 		choose_letsencrypt
-		sed -i "s#/path/to/certificate.crt#/usr/local/trojan/certificate.pem#g" /etc/trojan.json
-		sed -i "s#/path/to/private.key#/usr/local/trojan/privkey.pem#g" /etc/trojan.json
-		sed -i "s#example.com#${ydomain}#g" /root/test/config.json
-		sed -i 's#verify": true#verify": false#g' /root/test/config.json
-		sed -i 's#hostname": true#hostname": false#g' /root/test/config.json
-		cp /usr/local/trojan/certificate.pem /root/test/certificate.pem
-		sed -i 's#cert": "#cert": "certificate.pem#g' /root/test/config.json
-		sed -i "s#sni\": \"#sni\": \"${ydomain}#g" /root/test/config.json
+		cd /usr/local/trojan
+		sed -i "s#/path/to/certificate.crt#/root/certificate/fullchain.cer#g" /etc/trojan.json
+		sed -i "s#/path/to/private.key#/root/certificate/private.key#g" /etc/trojan.json
+		sed -i "s#example.com#${ydomain}#g" /root/certificate/config.json
+		sed -i 's#cert": "#cert": "fullchain.cer#g' /root/certificate/config.json
+		sed -i "s#sni\": \"#sni\": \"${ydomain}#g" /root/certificate/config.json
 		echo "${ydomain}" > /root/test/trojan
 		base64 -d <<< W1VuaXRdDQpBZnRlcj1uZXR3b3JrLnRhcmdldCANCg0KW1NlcnZpY2VdDQpFeGVjU3RhcnQ9L3Vzci9sb2NhbC90cm9qYW4vdHJvamFuIC1jIC9ldGMvdHJvamFuLmpzb24NClJlc3RhcnQ9YWx3YXlzDQoNCltJbnN0YWxsXQ0KV2FudGVkQnk9bXVsdGktdXNlci50YXJnZXQ=  > /etc/systemd/system/trojan.service
 		systemctl daemon-reload
 		systemctl enable trojan
 		systemctl start trojan
-		testmpo=2
-		view_password
-		echo -e "${Info}安装完成,如需设置伪装,请手动删除配置文件中监听的 443 端口,否则会报错!!!"
+		view_password '2'
+		echo -e "${Tip}安装完成,如需设置伪装,请手动删除配置文件中监听的 443 端口,否则会报错!!!"
+		echo -e "${Tip}证书以及用户配置文件所在文件夹：/root/certificate"
 		echo -e "${Info}任意键返回Trojan用户管理页..."
 		char=`get_char`
 		manage_user_trojan
 	}
 	uninstall_trojan(){
 		systemctl stop trojan
-		rm -rf /usr/local/trojan
-		rm -f /etc/trojan.json /etc/systemd/system/trojan.service
+		rm -rf /usr/local/trojan 
+		rm -f /root/test/trojan /etc/trojan.json /etc/systemd/system/trojan.service
 	}
 	add_user_trojan(){
 		clear
@@ -1671,17 +1746,21 @@ manage_trojan(){
 			cat /etc/trojan.json | jq '.password['${num}']="'${password}'"' > /root/test/temp.json
 			cp /root/test/temp.json /etc/trojan.json
 			systemctl restart trojan
-			testmpo=2
-			view_password
-			echo -e "    ————胖波比————
- ——————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续添加用户
- ${Green_font_prefix}2.${Font_color_suffix} 返回Trojan用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- ——————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
+			view_password '2'
+			white_font "       ————胖波比————\n"
+			yello_font '————————————————————————————'
+			green_font ' 1.' '  继续添加用户'
+			yello_font '————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 2.' '  返回Trojan用户管理页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "————————————————————————————\n"
+			read -p "请输入数字[0-3](默认:1)：" num
 			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				add_trojan_single
 				;;
@@ -1693,7 +1772,7 @@ manage_trojan(){
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]"
+				echo -e "${Error}请输入正确数字 [0-3]"
 				sleep 2s
 				add_user_trojan
 				;;
@@ -1701,7 +1780,7 @@ manage_trojan(){
 		}
 		add_trojan_multi(){
 			clear
-			stty erase ^H && read -p "请输入要添加的用户个数(默认:1)：" num
+			read -p "请输入要添加的用户个数(默认:1)：" num
 			[ -z "${num}" ] && num=1
 			base=$(jq '.password | length' /etc/trojan.json)
 			for(( i = 0; i < ${num}; i++ ))
@@ -1712,19 +1791,23 @@ manage_trojan(){
 				cp /root/test/temp.json /etc/trojan.json
 			done
 			systemctl restart trojan
-			testmpo=1
-			view_password
+			view_password '1'
 		}
-		echo && echo -e "    ————胖波比————
-—————————————————————
-${Green_font_prefix}1.${Font_color_suffix} 逐个添加
-${Green_font_prefix}2.${Font_color_suffix} 批量添加
-${Green_font_prefix}3.${Font_color_suffix} 返回Trojan用户管理页
-${Green_font_prefix}4.${Font_color_suffix} 退出脚本
-—————————————————————" && echo
-		stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-		[ -z "${num}" ] && num=4
+		white_font "\n     ————胖波比————\n"
+		yello_font '————————————————————————————'
+		green_font ' 1.' '  逐个添加'
+		green_font ' 2.' '  批量添加'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 3.' '  返回Trojan用户管理页'
+		green_font ' 4.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-4](默认:2)：" num
+		[ -z "${num}" ] && num=2
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			add_trojan_single
 			;;
@@ -1739,7 +1822,7 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-4]"
+			echo -e "${Error}请输入正确数字 [0-4]"
 			sleep 2s
 			add_user_trojan
 			;;
@@ -1749,27 +1832,31 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 		delete_trojan_single(){
 			clear
 			num=$(jq '.password | length' /etc/trojan.json)
-			echo -e "\n${Info}当前用户总数：${Red_font_prefix}${num}${Font_color_suffix}\n"
+			echo -e "\n${Info}当前用户总数：$(red_font $num)\n"
 			unset i
 			until [[ "${i}" -ge "1" && "${i}" -le "${num}" ]]
 			do
-				stty erase ^H && read -p "请输入要删除的用户序号 [1-${num}]:" i
+				read -p "请输入要删除的用户序号[1-${num}]：" i
 			done
 			i=$[${i}-1]
 			cat /etc/trojan.json | jq 'del(.password['${i}'])' > /root/test/temp.json
 			cp /root/test/temp.json /etc/trojan.json
 			systemctl restart trojan
-			testmpo=2
-			view_password
-			echo -e "	————胖波比————
- —————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续删除用户
- ${Green_font_prefix}2.${Font_color_suffix} 返回Trojan用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————"
-			stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
-			[ -z "${num}" ] && num=1
+			view_password '2'
+			white_font "       ————胖波比————\n"
+			yello_font '————————————————————————————'
+			green_font ' 1.' '  继续删除用户'
+			yello_font '————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 2.' '  返回Trojan用户管理页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "————————————————————————————\n"
+			read -p "请输入数字[0-3](默认:2)：" num
+			[ -z "${num}" ] && num=2
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				delete_trojan_single
 				;;
@@ -1781,7 +1868,7 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]"
+				echo -e "${Error}请输入正确数字 [0-3]"
 				sleep 2s
 				manage_user_trojan
 				;;
@@ -1792,22 +1879,27 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 			cat /etc/trojan.json | jq 'del(.password[])' > /root/test/temp.json
 			cp /root/test/temp.json /etc/trojan.json
 			echo -e "${Info}所有用户已删除！"
-			echo -e "${Info}Trojan至少要有一个用户，任意键添加用户..."
+			echo -e "${Tip}Trojan至少要有一个用户，任意键添加用户..."
 			char=`get_char`
 			add_user_trojan
 		}
 		delete_trojan_menu(){
 			clear
-			echo && echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 逐个删除
- ${Green_font_prefix}2.${Font_color_suffix} 全部删除
- ${Green_font_prefix}3.${Font_color_suffix} 返回Trojan用户管理页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
- —————————————————————" && echo
-			stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-			[ -z "${num}" ] && num=4
+			white_font "\n       ————胖波比————\n"
+			yello_font '————————————————————————————'
+			green_font ' 1.' '  逐个删除'
+			green_font ' 2.' '  全部删除'
+			yello_font '————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  返回Trojan用户管理页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "————————————————————————————\n"
+			read -p "请输入数字[0-4](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				delete_trojan_single
 				;;
@@ -1822,7 +1914,7 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				delete_trojan_menu
 				;;
@@ -1834,28 +1926,32 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 		change_trojan_single(){
 			clear
 			num=$(jq '.password | length' /etc/trojan.json)
-			echo -e "\n${Info}当前用户总数：${Red_font_prefix}${num}${Font_color_suffix}\n"
+			echo -e "\n${Info}当前用户总数：$(red_font $num)\n"
 			unset i
 			until [[ "${i}" -ge "1" && "${i}" -le "${num}" ]]
 			do
-				stty erase ^H && read -p "请输入要改密的用户序号 [1-${num}]:" i
+				read -p "请输入要改密的用户序号 [1-${num}]:" i
 			done
 			i=$[${i}-1]
 			password1=$(cat /etc/trojan.json | jq '.password['${i}']' | sed 's#"##g')
 			password=$(cat /proc/sys/kernel/random/uuid)
 			sed -i "s#${password1}#${password}#g" /etc/trojan.json
 			systemctl restart trojan
-			testmpo=2
-			view_password
-			echo -e "	————胖波比————
- —————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 继续更改密码
- ${Green_font_prefix}2.${Font_color_suffix} 返回Trojan用户管理页
- ${Green_font_prefix}3.${Font_color_suffix} 退出脚本
- —————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-3](默认:1)：" num
+			view_password '2'
+			white_font "       ————胖波比————\n"
+			yello_font '————————————————————————————'
+			green_font ' 1.' '  继续更改密码'
+			yello_font '————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 2.' '  返回Trojan用户管理页'
+			green_font ' 3.' '  退出脚本'
+			yello_font "————————————————————————————\n"
+			read -p "请输入数字[0-3](默认:1)：" num
 			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				change_trojan_single
 				;;
@@ -1867,7 +1963,7 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-3]:"
+				echo -e "${Error}请输入正确数字 [0-3]"
 				sleep 2s
 				change_trojan_menu
 				;;
@@ -1882,21 +1978,25 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 				cat /etc/trojan.json | jq '.password['${i}']="'${password}'"' > /root/test/temp.json
 				cp /root/test/temp.json /etc/trojan.json
 			done
-			testmpo=1
-			view_password
+			view_password '1'
 		}
 		change_trojan_menu(){
 			clear
-			echo && echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 逐个修改
- ${Green_font_prefix}2.${Font_color_suffix} 全部修改
- ${Green_font_prefix}3.${Font_color_suffix} 返回Trojan用户管理页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
- —————————————————————" && echo
-			stty erase ^H && read -p "请输入数字[1-4](默认:4)：" num
-			[ -z "${num}" ] && num=4
+			white_font "\n      ————胖波比————\n"
+			yello_font '————————————————————————————'
+			green_font ' 1.' '  逐个修改'
+			green_font ' 2.' '  全部修改'
+			yello_font '————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  返回Trojan用户管理页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "————————————————————————————\n"
+			read -p "请输入数字[0-4](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				change_trojan_single
 				;;
@@ -1911,7 +2011,7 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				change_trojan_menu
 				;;
@@ -1921,14 +2021,27 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 	}
 	view_password(){
 		clear
-		temp=$(jq '.password' /etc/trojan.json)
-		cat /root/test/config.json | jq ".password=${temp}" > /root/test/temp.json
-		cp /root/test/temp.json /root/test/config.json
-		jq '.password' /etc/trojan.json
-		echo -e "${Info}IP或域名：${Red_font_prefix}$(cat /root/test/trojan)${Font_color_suffix}"
-		echo -e "${Info}端口：${Red_font_prefix}443${Font_color_suffix}"
-		echo -e "${Info}当前用户总数：${Red_font_prefix}$(jq '.password | length' /etc/trojan.json)${Font_color_suffix}\n"
-		if [[ ${testmpo} == "1" ]]; then
+		ipinfo=$(cat /root/test/trojan)
+		pw_trojan=$(jq '.password' /etc/trojan.json)
+		length=$(jq '.password | length' /etc/trojan.json)
+		#tr_info=$(echo ${myinfo} |tr -d '\n' |od -An -tx1|tr ' ' %)
+		tr_info="$(curl -s https://ipapi.co/country/)-%E6%88%91%E4%BB%AC%E7%88%B1%E4%B8%AD%E5%9B%BD"
+		cat /root/certificate/config.json | jq 'del(.password[])' > /root/test/temp.json
+		cp /root/test/temp.json /root/certificate/config.json
+		for i in `seq 0 $[length-1]`
+		do
+			password=$(echo $pw_trojan | jq ".[$i]" | sed 's/"//g')
+			#更新用户配置文件
+			cat /root/certificate/config.json | jq '.password['${i}']="'${password}'"' > /root/test/temp.json
+			cp /root/test/temp.json /root/certificate/config.json
+			Trojanurl="trojan://${password}@${ipinfo}:443?allowInsecure=1&tfo=1#${tr_info}"
+			echo -e "密码：$(red_font $password)"
+			echo -e "Trojan链接：$(green_font $Trojanurl)\n"
+		done
+		echo -e "${Info}IP或域名：$(red_font ${ipinfo})"
+		echo -e "${Info}端口：$(red_font 443)"
+		echo -e "${Info}当前用户总数：$(red_font ${length})\n"
+		if [[ $1 == "1" ]]; then
 			echo -e "${Info}任意键返回Trojan用户管理页..."
 			char=`get_char`
 			manage_user_trojan
@@ -1936,43 +2049,43 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 	}
 	manage_user_trojan(){
 		clear
-		echo && echo -e "   Trojan用户管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	  -- 胖波比 --
-手动修改配置文件：vi /etc/trojan.json
-
-————————Trojan用户管理————————
- ${Green_font_prefix}1.${Font_color_suffix} 添加用户
- ${Green_font_prefix}2.${Font_color_suffix} 删除用户
- ${Green_font_prefix}3.${Font_color_suffix} 更改密码
- ${Green_font_prefix}4.${Font_color_suffix} 查看用户密码
- ${Green_font_prefix}5.${Font_color_suffix} 回到主页
- ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
-——————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-6](默认:6):" num
-		[ -z "${num}" ] && num=6
+		white_font "\n   Trojan用户管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font '	    -- 胖波比 --'
+		white_font "手动修改配置文件：vi /etc/trojan.json\n"
+		yello_font '———————Trojan用户管理———————'
+		green_font ' 1.' '  更改密码'
+		green_font ' 2.' '  查看用户链接'
+		yello_font '————————————————————————————'
+		green_font ' 3.' '  添加用户'
+		green_font ' 4.' '  删除用户'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 5.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-5](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
-			1)
-			add_user_trojan
-			;;
-			2)
-			delete_user_trojan
-			;;
-			3)
-			change_pw_trojan
-			;;
-			4)
-			testmpo=1
-			view_password
-			;;
-			5)
+			0)
 			start_menu_main
 			;;
-			6)
+			1)
+			change_pw_trojan
+			;;
+			2)
+			view_password '1'
+			;;
+			3)
+			add_user_trojan
+			;;
+			4)
+			delete_user_trojan
+			;;
+			5)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-6]"
+			echo -e "${Error}请输入正确数字 [0-5]"
 			sleep 2s
 			manage_user_trojan
 			;;
@@ -1980,31 +2093,36 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 	}
 	start_menu_trojan(){
 		clear
-		echo && echo -e " Trojan一键安装脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-    -- 胖波比 --
-
-—————————Trojan安装————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装Trojan
- ${Green_font_prefix}2.${Font_color_suffix} 卸载Trojan
- ${Green_font_prefix}3.${Font_color_suffix} 管理Trojan用户
- ${Green_font_prefix}4.${Font_color_suffix} 重启Trojan
- ${Green_font_prefix}5.${Font_color_suffix} 关闭Trojan
- ${Green_font_prefix}6.${Font_color_suffix} 启动Trojan
- ${Green_font_prefix}7.${Font_color_suffix} 查看Trojan状态
- ${Green_font_prefix}8.${Font_color_suffix} 回到主页
- ${Green_font_prefix}9.${Font_color_suffix} 退出脚本
-———————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-9](默认:9):" num
-		[ -z "${num}" ] && num=9
+		white_font "\n Trojan一键安装脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "        -- 胖波比 --\n"
+		yello_font '————————————————————————————'
+		green_font ' 1.' '  管理Trojan用户'
+		yello_font '————————————————————————————'
+		green_font ' 2.' '  安装Trojan'
+		green_font ' 3.' '  卸载Trojan'
+		yello_font '————————————————————————————'
+		green_font ' 4.' '  重启Trojan'
+		green_font ' 5.' '  关闭Trojan'
+		green_font ' 6.' '  启动Trojan'
+		green_font ' 7.' '  查看Trojan状态'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-8](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
-			install_trojan
+			manage_user_trojan
 			;;
 			2)
-			uninstall_trojan
+			install_trojan
 			;;
 			3)
-			manage_user_trojan
+			uninstall_trojan
 			;;
 			4)
 			systemctl restart trojan
@@ -2019,14 +2137,11 @@ ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
 			systemctl status trojan
 			;;
 			8)
-			start_menu_main
-			;;
-			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-9]"
+			echo -e "${Error}请输入正确数字 [0-8]"
 			sleep 2s
 			start_menu_trojan
 			;;
@@ -2042,8 +2157,8 @@ install_bbr(){
 	#安装BBR内核
 	installbbr(){
 		kernel_version="4.11.8"
-		if [[ "${release}" == "centos" ]]; then
-			if [[ "${version}" -ge "8" ]]; then
+		if [[ ${release} == "centos" ]]; then
+			if [[ ${version} -ge "8" ]]; then
 				echo -e "${Error}暂不支持CentOS ${version}系统!!!任意键返回主页..."
 				char=`get_char`
 				start_menu_main
@@ -2053,7 +2168,7 @@ install_bbr(){
 			yum remove -y kernel-headers
 			yum install -y http://${github}/bbr/${release}/${version}/${bit}/kernel-ml-headers-${kernel_version}.rpm
 			yum install -y http://${github}/bbr/${release}/${version}/${bit}/kernel-ml-devel-${kernel_version}.rpm
-		elif [[ "${release}" == "debian" || "${release}" == "ubuntu" ]]; then
+		elif [[ ${release} == "debian" || ${release} == "ubuntu" ]]; then
 			mkdir bbr && cd bbr
 			wget http://security.debian.org/debian-security/pool/updates/main/o/openssl/libssl1.0.0_1.0.1t-1+deb8u10_amd64.deb
 			wget -N --no-check-certificate http://${github}/bbr/debian-ubuntu/linux-headers-${kernel_version}-all.deb
@@ -2068,8 +2183,8 @@ install_bbr(){
 		fi
 		detele_kernel
 		BBR_grub
-		echo -e "${Tip} 重启VPS后，请重新运行脚本开启${Red_font_prefix}BBR/BBR魔改版${Font_color_suffix}"
-		stty erase '^H' && stty erase ^H && read -p "需要重启VPS后，才能开启BBR/BBR魔改版，是否现在重启 ? [Y/n] :" yn
+		echo -e "${Tip}重启VPS后，请重新运行脚本开启$(red_font BBR/BBR魔改版)"
+		read -p "需要重启VPS后，才能开启BBR/BBR魔改版，是否现在重启?[y/n](默认:y)：" yn
 		[ -z "${yn}" ] && yn="y"
 		if [[ $yn == [Yy] ]]; then
 			echo -e "${Info} VPS 重启中..."
@@ -2080,8 +2195,8 @@ install_bbr(){
 	#安装BBRplus内核
 	installbbrplus(){
 		kernel_version="4.14.129-bbrplus"
-		if [[ "${release}" == "centos" ]]; then
-			if [[ "${version}" -ge "8" ]]; then
+		if [[ ${release} == "centos" ]]; then
+			if [[ ${version} -ge "8" ]]; then
 				echo -e "${Error}暂不支持CentOS ${version}系统!!!任意键返回主页..."
 				char=`get_char`
 				start_menu_main
@@ -2093,7 +2208,7 @@ install_bbr(){
 			rm -f kernel-headers-${kernel_version}.rpm
 			rm -f kernel-${kernel_version}.rpm
 			kernel_version="4.14.129_bbrplus" #fix a bug
-		elif [[ "${release}" == "debian" || "${release}" == "ubuntu" ]]; then
+		elif [[ ${release} == "debian" || ${release} == "ubuntu" ]]; then
 			mkdir bbrplus && cd bbrplus
 			wget -N --no-check-certificate http://${github}/bbrplus/debian-ubuntu/${bit}/linux-headers-${kernel_version}.deb
 			wget -N --no-check-certificate http://${github}/bbrplus/debian-ubuntu/${bit}/linux-image-${kernel_version}.deb
@@ -2103,8 +2218,8 @@ install_bbr(){
 		fi
 		detele_kernel
 		BBR_grub
-		echo -e "${Tip} 重启VPS后，请重新运行脚本开启${Red_font_prefix}BBRplus${Font_color_suffix}"
-		stty erase '^H' && stty erase ^H && read -p "需要重启VPS后，才能开启BBRplus，是否现在重启 ? [Y/n] :" yn
+		echo -e "${Tip}重启VPS后，请重新运行脚本开启$(red_font BBRplus)"
+		read -p "需要重启VPS后，才能开启BBRplus，是否现在重启?[y/n](默认:y)：" yn
 		[ -z "${yn}" ] && yn="y"
 		if [[ $yn == [Yy] ]]; then
 			echo -e "${Info} VPS 重启中..."
@@ -2114,8 +2229,8 @@ install_bbr(){
 
 	#安装Lotserver内核
 	installlot(){
-		if [[ "${release}" == "centos" ]]; then
-			if [[ "${version}" -ge "8" ]]; then
+		if [[ ${release} == "centos" ]]; then
+			if [[ ${version} -ge "8" ]]; then
 				echo -e "${Error}暂不支持CentOS ${version}系统!!!任意键返回主页..."
 				char=`get_char`
 				start_menu_main
@@ -2128,13 +2243,13 @@ install_bbr(){
 			yum remove -y kernel-headers
 			yum install -y http://${github}/lotserver/${release}/${version}/${bit}/kernel-headers-${kernel_version}.rpm
 			yum install -y http://${github}/lotserver/${release}/${version}/${bit}/kernel-devel-${kernel_version}.rpm
-		elif [[ "${release}" == "ubuntu" || "${release}" == "debian" ]]; then
+		elif [[ ${release} == "ubuntu" || ${release} == "debian" ]]; then
 			bash <(wget --no-check-certificate -qO- "http://${github}/Debian_Kernel.sh")
 		fi
 		detele_kernel
 		BBR_grub
-		echo -e "${Tip} 重启VPS后，请重新运行脚本开启${Red_font_prefix}Lotserver${Font_color_suffix}"
-		stty erase '^H' && stty erase ^H && read -p "需要重启VPS后，才能开启Lotserver，是否现在重启 ? [Y/n] :" yn
+		echo -e "${Tip}重启VPS后，请重新运行脚本开启$(red_font Lotserver)"
+		read -p "需要重启VPS后，才能开启Lotserver，是否现在重启?[y/n](默认:y)：" yn
 		[ -z "${yn}" ] && yn="y"
 		if [[ $yn == [Yy] ]]; then
 			echo -e "${Info} VPS 重启中..."
@@ -2341,7 +2456,7 @@ install_bbr(){
 		echo "*               soft    nofile           1000000
 	*               hard    nofile          1000000">/etc/security/limits.conf
 		echo "ulimit -SHn 1000000">>/etc/profile
-		stty erase ^H && read -p "需要重启VPS后，才能生效系统优化配置，是否现在重启 ? [Y/n] :" yn
+		read -p "需要重启VPS后，才能生效系统优化配置，是否现在重启 ? [Y/n] :" yn
 		[ -z "${yn}" ] && yn="y"
 		if [[ $yn == [Yy] ]]; then
 			echo -e "${Info} VPS 重启中..."
@@ -2407,7 +2522,6 @@ install_bbr(){
 	#############系统检测组件#############
 	#检查Linux版本
 	check_version_bbr(){
-		bit=`uname -m`
 		if [[ "${bit}" =~ "64" ]]; then
 			bit="x64"
 		else
@@ -2581,614 +2695,642 @@ install_bbr(){
 
 	#开始菜单
 	start_menu_bbr(){
-	clear
-	echo && echo -e " TCP加速 一键安装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-  -- 就是爱生活 | 94ish.me --
-  
-————————————内核管理————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装 BBR/BBR魔改版内核
- ${Green_font_prefix}2.${Font_color_suffix} 安装 BBRplus版内核 
- ${Green_font_prefix}3.${Font_color_suffix} 安装 Lotserver(锐速)内核
-————————————加速管理————————————
- ${Green_font_prefix}4.${Font_color_suffix} 使用BBR加速
- ${Green_font_prefix}5.${Font_color_suffix} 使用BBR魔改版加速
- ${Green_font_prefix}6.${Font_color_suffix} 使用暴力BBR魔改版加速(不支持部分系统)
- ${Green_font_prefix}7.${Font_color_suffix} 使用BBRplus版加速
- ${Green_font_prefix}8.${Font_color_suffix} 使用Lotserver(锐速)加速
-————————————杂项管理————————————
- ${Green_font_prefix}9.${Font_color_suffix} 卸载全部加速
- ${Green_font_prefix}10.${Font_color_suffix} 系统配置优化
- ${Green_font_prefix}11.${Font_color_suffix} 回到主页
- ${Green_font_prefix}12.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-
+		clear
+		white_font "\n TCP加速一键安装管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "          -- 胖波比 --\n"
+		yello_font '————————————内核管理————————————'
+		green_font ' 1.' '  安装 BBR/BBR魔改版内核'
+		green_font ' 2.' '  安装 BBRplus版内核'
+		green_font ' 3.' '  安装 Lotserver(锐速)内核'
+		yello_font '————————————加速管理————————————'
+		green_font ' 4.' '  使用BBR加速'
+		green_font ' 5.' '  使用BBR魔改版加速'
+		green_font ' 6.' '  使用暴力BBR魔改版加速(不支持部分系统)'
+		green_font ' 7.' '  使用BBRplus版加速'
+		green_font ' 8.' '  使用Lotserver(锐速)加速'
+		yello_font '————————————杂项管理————————————'
+		green_font ' 9.' '  卸载全部加速'
+		green_font ' 10.' ' 系统配置优化'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 11.' ' 退出脚本'
+		yello_font '————————————————————————————————'
 		check_status
 		if [[ ${kernel_status} == "noinstall" ]]; then
-			echo -e " 当前状态: ${Green_font_prefix}未安装${Font_color_suffix} 加速内核 ${Red_font_prefix}请先安装内核${Font_color_suffix}"
+			echo -e "当前状态: $(green_font 未安装)加速内核，$(red_font 请先安装内核!)\n"
 		else
-			echo -e " 当前状态: ${Green_font_prefix}已安装${Font_color_suffix} ${_font_prefix}${kernel_status}${Font_color_suffix} 加速内核 , ${Green_font_prefix}${run_status}${Font_color_suffix}"
+			echo -e "当前状态: $(green_font "已安装 ${kernel_status}") 加速内核，$(green_font $run_status)\n"
 			
 		fi
-	echo
-	stty erase ^H && read -p "请输入数字 [1-12](默认:12):" num
-	[ -z "${num}" ] && num=12
-	case "$num" in
-		1)
-		check_sys_bbr
-		;;
-		2)
-		check_sys_bbrplus
-		;;
-		3)
-		check_sys_Lotsever
-		;;
-		4)
-		startbbr
-		;;
-		5)
-		startbbrmod
-		;;
-		6)
-		startbbrmod_nanqinlang
-		;;
-		7)
-		startbbrplus
-		;;
-		8)
-		startlotserver
-		;;
-		9)
-		remove_all
-		;;
-		10)
-		optimizing_system
-		;;
-		11)
-		start_menu_main
-		;;
-		12)
-		exit 1
-		;;
-		*)
-		clear
-		echo -e "${Error}:请输入正确数字 [1-12]"
-		sleep 2s
-		start_menu_bbr
-		;;
-	esac
+		read -p "请输入数字[0-11](默认:2)：" num
+		[ -z "${num}" ] && num=2
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			check_sys_bbr
+			;;
+			2)
+			check_sys_bbrplus
+			;;
+			3)
+			check_sys_Lotsever
+			;;
+			4)
+			startbbr
+			;;
+			5)
+			startbbrmod
+			;;
+			6)
+			startbbrmod_nanqinlang
+			;;
+			7)
+			startbbrplus
+			;;
+			8)
+			startlotserver
+			;;
+			9)
+			remove_all
+			;;
+			10)
+			optimizing_system
+			;;
+			11)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-11]"
+			sleep 2s
+			start_menu_bbr
+			;;
+		esac
 	}
 	check_version_bbr
 	start_menu_bbr
 }
 
-#安装宝塔面板
-install_btpanel(){
-	LANG=en_US.UTF-8
-
-	Red_Error(){
-		echo '=================================================';
-		printf '\033[1;31;40m%b\033[0m\n' "$1";
-		exit 0;
-	}
-
-	is64bit=$(getconf LONG_BIT)
-	if [ "${is64bit}" != '64' ];then
-		Red_Error "抱歉, 6.0不支持32位系统,请使用64位系统或安装宝塔5.9!";
-	fi
-	isPy26=$(python -V 2>&1|grep '2.6.')
-	if [ "${isPy26}" ];then
-		Red_Error "抱歉, 6.0不支持Centos6.x,请安装Centos7或安装宝塔5.9";
-	fi
-
-	Install_Check(){
-		while [ "$yes" != 'yes' ] && [ "$yes" != 'n' ]
-		do
-			echo -e "----------------------------------------------------"
-			echo -e "已有Web环境，安装宝塔可能影响现有站点"
-			echo -e "Web service is alreday installed,Can't install panel"
-			echo -e "----------------------------------------------------"
-			stty erase ^H && read -p "输入yes强制安装/Enter yes to force installation (yes/n): " yes;
-		done 
-		if [ "$yes" == 'n' ];then
-			exit;
-		fi
-	}
-	System_Check(){
-		for serviceS in nginx httpd mysqld
-		do
-			if [ -f "/etc/init.d/${serviceS}" ]; then
-				if [ "${serviceS}" = "httpd" ]; then
-					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/apache)
-				elif [ "${serviceS}" = "mysqld" ]; then
-					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/mysql)
-				else
-					serviceCheck=$(cat /etc/init.d/${serviceS}|grep /www/server/${serviceS})
-				fi
-				[ -z "${serviceCheck}" ] && Install_Check
-			fi
-		done
-	}
-	Auto_Swap(){
-		swap=$(free |grep Swap|awk '{print $2}')
-		if [ ${swap} -gt 1 ];then
-			echo "Swap total sizse: $swap";
-			return;
-		fi
-		if [ ! -d /www ];then
-			mkdir /www
-		fi
-		swapFile="/www/swap"
-		dd if=/dev/zero of=$swapFile bs=1M count=1025
-		mkswap -f $swapFile
-		swapon $swapFile
-		echo "$swapFile    swap    swap    defaults    0 0" >> /etc/fstab
-		swap=`free |grep Swap|awk '{print $2}'`
-		if [ $swap -gt 1 ];then
-			echo "Swap total sizse: $swap";
-			return;
-		fi
-		
-		sed -i "/\/www\/swap/d" /etc/fstab
-		rm -f $swapFile
-	}
-	Service_Add(){
-		if [ "${PM}" == "yum" ] || [ "${PM}" == "dnf" ]; then
-			chkconfig --add bt
-			chkconfig --level 2345 bt on
-		elif [ "${PM}" == "apt-get" ]; then
-			update-rc.d bt defaults
-		fi 
-	}
-
-	get_node_url(){
-		echo '---------------------------------------------';
-		echo "Selected download node...";
-		nodes=(http://183.235.223.101:3389 http://119.188.210.21:5880 http://125.88.182.172:5880 http://103.224.251.67 http://45.32.116.160 http://download.bt.cn);
-		i=1;
-		if [ ! -f /bin/curl ];then
-			if [ "${PM}" = "yum" ]; then
-				yum install curl -y
-			elif [ "${PM}" = "apt-get" ]; then
-				apt-get install curl -y
-			fi
-		fi
-		for node in ${nodes[@]};
-		do
-			start=`date +%s.%N`
-			result=`curl -sS --connect-timeout 3 -m 60 $node/check.txt`
-			if [ $result = 'True' ];then
-				end=`date +%s.%N`
-				start_s=`echo $start | cut -d '.' -f 1`
-				start_ns=`echo $start | cut -d '.' -f 2`
-				end_s=`echo $end | cut -d '.' -f 1`
-				end_ns=`echo $end | cut -d '.' -f 2`
-				time_micro=$(( (10#$end_s-10#$start_s)*1000000 + (10#$end_ns/1000 - 10#$start_ns/1000) ))
-				time_ms=$(($time_micro/1000))
-				values[$i]=$time_ms;
-				urls[$time_ms]=$node
-				i=$(($i+1))
-			fi
-		done
-		j=5000
-		for n in ${values[@]};
-		do
-			if [ $j -gt $n ];then
-				j=$n
-			fi
-		done
-		if [ $j = 5000 ];then
-			NODE_URL='http://download.bt.cn';
-		else
-			NODE_URL=${urls[$j]}
-		fi
-		download_Url=$NODE_URL
-		echo "Download node: $download_Url";
-		echo '---------------------------------------------';
-	}
-	Install_RPM_Pack(){
-		yumPath=/etc/yum.conf
-		isExc=`cat $yumPath|grep httpd`
-		if [ "$isExc" = "" ];then
-			echo "exclude=httpd nginx php mysql mairadb python-psutil python2-psutil" >> $yumPath
-		fi
-
-		yum install ntp -y
-		rm -rf /etc/localtime
-		ln -s /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-
-		#尝试同步时间(从bt.cn)
-		echo 'Synchronizing system time...'
-		getBtTime=$(curl -sS --connect-timeout 3 -m 60 http://www.bt.cn/api/index/get_time)
-		if [ "${getBtTime}" ];then	
-			date -s "$(date -d @$getBtTime +"%Y-%m-%d %H:%M:%S")"
-		fi
-
-		#尝试同步国际时间(从ntp服务器)
-		ntpdate 0.asia.pool.ntp.org
-		setenforce 0
-		startTime=`date +%s`
-		sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
-		yumPacks="wget python-devel python-imaging zip unzip openssl openssl-devel gcc libxml2 libxml2-devel libxslt* zlib zlib-devel libjpeg-devel libpng-devel libwebp libwebp-devel freetype freetype-devel lsof pcre pcre-devel vixie-cron crontabs icu libicu-devel c-ares"
-		yum install -y ${yumPacks}
-
-		for yumPack in ${yumPacks}
-		do
-			rpmPack=$(rpm -q ${yumPack})
-			packCheck=$(echo ${rpmPack}|grep not)
-			if [ "${packCheck}" ]; then
-				yum install ${yumPack} -y
-			fi
-		done
-
-		if [ -f "/usr/bin/dnf" ]; then
-			dnf install -y redhat-rpm-config
-		fi
-		yum install python-devel -y
-	}
-	Install_Deb_Pack(){
-		ln -sf bash /bin/sh
-		apt-get update -y
-		apt-get install ruby -y
-		apt-get install lsb-release -y
-		#apt-get install ntp ntpdate -y
-		#/etc/init.d/ntp stop
-		#update-rc.d ntp remove
-		#cat >>~/.profile<<EOF
-		#TZ='Asia/Shanghai'; export TZ
-		#EOF
-		#rm -rf /etc/localtime
-		#cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
-		#echo 'Synchronizing system time...'
-		#ntpdate 0.asia.pool.ntp.org
-		#apt-get upgrade -y
-		for pace in wget curl python python-dev python-imaging zip unzip openssl libssl-dev gcc libxml2 libxml2-dev libxslt zlib1g zlib1g-dev libjpeg-dev libpng-dev lsof libpcre3 libpcre3-dev cron;
-		do apt-get -y install $pace --force-yes; done
-		apt-get -y install python-dev
-
-		tmp=$(python -V 2>&1|awk '{print $2}')
-		pVersion=${tmp:0:3}
-		if [ "${pVersion}" == '2.7' ];then
-			apt-get -y install python2.7-dev
-		fi
-	}
-	Install_Bt(){
-		setup_path="/www"
-		stty erase ^H && read -p "请输入宝塔面板登录端口(默认:1314):" panelPort
-		[ -z "${panelPort}" ] && panelPort=1314
-		if [ -f ${setup_path}/server/panel/data/port.pl ];then
-			panelPort=$(cat ${setup_path}/server/panel/data/port.pl)
-		fi
-		mkdir -p ${setup_path}/server/panel/logs
-		mkdir -p ${setup_path}/server/panel/vhost/apache
-		mkdir -p ${setup_path}/server/panel/vhost/nginx
-		mkdir -p ${setup_path}/server/panel/vhost/rewrite
-		mkdir -p /www/server
-		mkdir -p /www/wwwroot
-		mkdir -p /www/wwwlogs
-		mkdir -p /www/backup/database
-		mkdir -p /www/backup/site
-
-		if [ ! -f "/usr/bin/unzip" ]; then
-			if [ "${PM}" = "yum" ]; then
-				yum install unzip -y
-			elif [ "${PM}" = "apt-get" ]; then
-				apt-get install unzip -y
-			fi
-		fi
-
-		if [ -f "/etc/init.d/bt" ]; then
-			/etc/init.d/bt stop
-			sleep 1
-		fi
-
-		wget -O panel.zip ${download_Url}/install/src/panel6.zip -T 10
-		wget -O /etc/init.d/bt ${download_Url}/install/src/bt6.init -T 10
-
-		if [ -f "${setup_path}/server/panel/data/default.db" ];then
-			if [ -d "/${setup_path}/server/panel/old_data" ];then
-				rm -rf ${setup_path}/server/panel/old_data
-			fi
-			mkdir -p ${setup_path}/server/panel/old_data
-			mv -f ${setup_path}/server/panel/data/default.db ${setup_path}/server/panel/old_data/default.db
-			mv -f ${setup_path}/server/panel/data/system.db ${setup_path}/server/panel/old_data/system.db
-			mv -f ${setup_path}/server/panel/data/port.pl ${setup_path}/server/panel/old_data/port.pl
-			mv -f ${setup_path}/server/panel/data/admin_path.pl ${setup_path}/server/panel/old_data/admin_path.pl
-		fi
-
-		unzip -o panel.zip -d ${setup_path}/server/ > /dev/null
-
-		if [ -d "${setup_path}/server/panel/old_data" ];then
-			mv -f ${setup_path}/server/panel/old_data/default.db ${setup_path}/server/panel/data/default.db
-			mv -f ${setup_path}/server/panel/old_data/system.db ${setup_path}/server/panel/data/system.db
-			mv -f ${setup_path}/server/panel/old_data/port.pl ${setup_path}/server/panel/data/port.pl
-			mv -f ${setup_path}/server/panel/old_data/admin_path.pl ${setup_path}/server/panel/data/admin_path.pl
-			if [ -d "/${setup_path}/server/panel/old_data" ];then
-				rm -rf ${setup_path}/server/panel/old_data
-			fi
-		fi
-
-		rm -f panel.zip
-
-		if [ ! -f ${setup_path}/server/panel/tools.py ];then
-			Red_Error "ERROR: Failed to download, please try install again!"
-		fi
-
-		rm -f ${setup_path}/server/panel/class/*.pyc
-		rm -f ${setup_path}/server/panel/*.pyc
-
-		chmod +x /etc/init.d/bt
-		chmod -R 600 ${setup_path}/server/panel
-		chmod -R +x ${setup_path}/server/panel/script
-		ln -sf /etc/init.d/bt /usr/bin/bt
-		echo "${panelPort}" > ${setup_path}/server/panel/data/port.pl
-	}
-	Install_Pip(){
-		isPip=$(pip -V|grep python)
-		if [ -z "${isPip}" ];then
-			wget -O get-pip.py ${download_Url}/src/get-pip.py
-			python get-pip.py
-			rm -f get-pip.py
-			isPip=$(pip -V|grep python)
-			if [ -z "${isPip}" ];then
-				if [ "${PM}" = "yum" ]; then
-					yum install python-pip -y
-				elif [ "${PM}" = "apt-get" ]; then
-					apt-get install python-pip -y
-				fi
-			fi
-		fi
-	}
-	Install_Pillow(){
-		isSetup=$(python -m PIL 2>&1|grep package)
-		if [ "$isSetup" = "" ];then
-			isFedora = `cat /etc/redhat-release |grep Fedora`
-			if [ "${isFedora}" ];then
-				pip install Pillow
-				return;
-			fi
-			wget -O Pillow-3.2.0.zip $download_Url/install/src/Pillow-3.2.0.zip -T 10
-			unzip Pillow-3.2.0.zip
-			rm -f Pillow-3.2.0.zip
-			cd Pillow-3.2.0
-			python setup.py install
-			cd ..
-			rm -rf Pillow-3.2.0
-		fi
-		
-		isSetup=$(python -m PIL 2>&1|grep package)
-		if [ -z "${isSetup}" ];then
-			Red_Error "Pillow installation failed."
-		fi
-	}
-	Install_psutil(){
-		isSetup=`python -m psutil 2>&1|grep package`
-		if [ "$isSetup" = "" ];then
-			wget -O psutil-5.2.2.tar.gz $download_Url/install/src/psutil-5.2.2.tar.gz -T 10
-			tar xvf psutil-5.2.2.tar.gz
-			rm -f psutil-5.2.2.tar.gz
-			cd psutil-5.2.2
-			python setup.py install
-			cd ..
-			rm -rf psutil-5.2.2
-		fi
-		isSetup=$(python -m psutil 2>&1|grep package)
-		if [ "${isSetup}" = "" ];then
-			Red_Error "Psutil installation failed."
-		fi
-	}
-	Install_chardet(){
-		isSetup=$(python -m chardet 2>&1|grep package)
-		if [ "${isSetup}" = "" ];then
-			wget -O chardet-2.3.0.tar.gz $download_Url/install/src/chardet-2.3.0.tar.gz -T 10
-			tar xvf chardet-2.3.0.tar.gz
-			rm -f chardet-2.3.0.tar.gz
-			cd chardet-2.3.0
-			python setup.py install
-			cd ..
-			rm -rf chardet-2.3.0
-		fi	
-		
-		isSetup=$(python -m chardet 2>&1|grep package)
-		if [ -z "${isSetup}" ];then
-			Red_Error "chardet installation failed."
-		fi
-	}
-	Install_Python_Lib(){
-		isPsutil=$(python -m psutil 2>&1|grep package)
-		if [ "${isPsutil}" ];then
-			PSUTIL_VERSION=`python -c 'import psutil;print psutil.__version__;' |grep '5.'` 
-			if [ -z "${PSUTIL_VERSION}" ];then
-				pip uninstall psutil -y 
-			fi
-		fi
-
-		if [ "${PM}" = "yum" ]; then
-			yum install libffi-devel -y
-		elif [ "${PM}" = "apt-get" ]; then
-			apt install libffi-dev -y
-		fi
-
-		curl -Ss --connect-timeout 3 -m 60 http://download.bt.cn/install/pip_select.sh|bash
-		pip install --upgrade setuptools 
-		pip install -r ${setup_path}/server/panel/requirements.txt
-		isGevent=$(pip list|grep gevent)
-		if [ "$isGevent" = "" ];then
-			if [ "${PM}" = "yum" ]; then
-				yum install python-gevent -y
-			elif [ "${PM}" = "apt-get" ]; then
-				apt-get install python-gevent -y
-			fi
-		fi
-		pip install psutil chardet virtualenv Flask Flask-Session Flask-SocketIO flask-sqlalchemy Pillow gunicorn gevent-websocket paramiko
-		
-		Install_Pillow
-		Install_psutil
-		Install_chardet
-		pip install gunicorn
-
-	}
-
-	Set_Bt_Panel(){
-		password=$(cat /dev/urandom | head -n 16 | md5sum | head -c 8)
-		sleep 1
-		admin_auth="/www/server/panel/data/admin_path.pl"
-		if [ ! -f ${admin_auth} ];then
-			auth_path=$(cat /dev/urandom | head -n 16 | md5sum | head -c 8)
-			echo "/${auth_path}" > ${admin_auth}
-		fi
-		auth_path=$(cat ${admin_auth})
-		cd ${setup_path}/server/panel/
-		/etc/init.d/bt start
-		python -m py_compile tools.py
-		python tools.py username
-		username=$(python tools.py panel ${password})
-		cd ~
-		echo "${password}" > ${setup_path}/server/panel/default.pl
-		chmod 600 ${setup_path}/server/panel/default.pl
-		/etc/init.d/bt restart
-		sleep 3
-		isStart=$(ps aux |grep 'gunicorn'|grep -v grep|awk '{print $2}')
-		if [ -z "${isStart}" ];then
-			Red_Error "ERROR: The BT-Panel service startup failed."
-		fi
-	}
-	Set_Firewall(){
-		sshPort=$(cat /etc/ssh/sshd_config | grep 'Port '|awk '{print $2}')
-		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
-			systemctl enable firewalld
-			systemctl start firewalld
-			firewall-cmd --set-default-zone=public > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=20/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=21/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=22/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=80/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=888/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=${panelPort}/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --add-port=${sshPort}/tcp > /dev/null 2>&1
-			#firewall-cmd --permanent --zone=public --add-port=39000-40000/tcp > /dev/null 2>&1
-			firewall-cmd --reload
-		else
-			iptables -I INPUT -p tcp --dport 20 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 21 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 22 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-			iptables -I INPUT -p tcp --dport 888 -j ACCEPT
-			iptables -I INPUT -p tcp --dport ${panelPort} -j ACCEPT
-			iptables -I INPUT -p tcp --dport ${sshPort} -j ACCEPT
-			#iptables -I INPUT -p tcp --dport 39000:40000 -j ACCEPT
-			if [[ ${release} == "centos" ]]; then
-				service iptables save
-			else
-				iptables-save > /etc/iptables.up.rules
-			fi
-		fi
-	}
-	Get_Ip_Address(){
-		getIpAddress=""
-		getIpAddress=$(curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/getIpAddress)
-		if [ -z "${getIpAddress}" ] || [ "${getIpAddress}" = "0.0.0.0" ]; then
-			isHosts=$(cat /etc/hosts|grep 'www.bt.cn')
-			if [ -z "${isHosts}" ];then
-				echo "" >> /etc/hosts
-				echo "103.224.251.67 www.bt.cn" >> /etc/hosts
-				getIpAddress=$(curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/getIpAddress)
-				if [ -z "${getIpAddress}" ];then
-					sed -i "/bt.cn/d" /etc/hosts
-				fi
-			fi
-		fi
-
-		ipv4Check=$(python -c "import re; print(re.match('^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$','${getIpAddress}'))")
-		if [ "${ipv4Check}" == "None" ];then
-			ipv6Address=$(echo ${getIpAddress}|tr -d "[]")
-			ipv6Check=$(python -c "import re; print(re.match('^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$','${ipv6Address}'))")
-			if [ "${ipv6Check}" == "None" ]; then
-				getIpAddress="SERVER_IP"
-			else
-				echo "True" > ${setup_path}/server/panel/data/ipv6.pl
-				sleep 1
-				/etc/init.d/bt restart
-			fi
-		fi
-
-		if [ "${getIpAddress}" != "SERVER_IP" ];then
-			echo "${getIpAddress}" > ${setup_path}/server/panel/data/iplist.txt
-		fi
-	}
-	Setup_Count(){
-		curl -sS --connect-timeout 10 -m 60 https://www.bt.cn/Api/SetupCount?type=Linux\&o=$1 > /dev/null 2>&1
-		if [ "$1" != "" ];then
-			echo $1 > /www/server/panel/data/o.pl
-			cd /www/server/panel
-			python tools.py o
-		fi
-		echo /www > /var/bt_setupPath.conf
-	}
-
-	Install_Main(){
-		System_Check
-		get_node_url
-
-		Auto_Swap
-
-		startTime=`date +%s`
-		if [ "${PM}" = "yum" ]; then
-			Install_RPM_Pack
-		elif [ "${PM}" = "apt-get" ]; then
-			Install_Deb_Pack
-		fi
-
-		Install_Bt
-
-		Install_Pip
-		Install_Python_Lib
-
-		Set_Bt_Panel
-		Service_Add
-		Set_Firewall
-
-		Get_Ip_Address
-		Setup_Count
-	}
-
-	echo "
-	+----------------------------------------------------------------------
-	| Bt-WebPanel 6.0 FOR CentOS/Ubuntu/Debian
-	+----------------------------------------------------------------------
-	| Copyright © 2015-2099 BT-SOFT(http://www.bt.cn) All rights reserved.
-	+----------------------------------------------------------------------
-	| The WebPanel URL will be http://SERVER_IP:1314 when installed.
-	+----------------------------------------------------------------------
-	"
-	while [ "$go" != 'y' ] && [ "$go" != 'n' ]
+check_port(){
+	unset port
+	until [[ ${port} -ge "1" && ${port} -le "65535" ]]
 	do
-		stty erase ^H && read -p "Do you want to install Bt-Panel to the $setup_path directory now?(y/n): " go;
+		clear
+		echo && read -p "${webinfo}" port
+		[ -z "${port}" ] && port=80
+		if [[ -n "$(lsof -i:${port})" ]]; then
+			echo -e "${Error}端口${port}已被占用！请输入新的端口!!!"
+			sleep 2s && check_port
+		fi
 	done
+}
+set_fakeweb(){
+	clear
+	webinfo='请输入网站访问端口(未占用端口)(默认:80)：'
+	check_port
+	i=0
+	until [[ $i -ge '1' && ! -d "${fakeweb}" ]]
+	do
+		i=$[$i+1] && fakeweb="/opt/fakeweb${i}"
+	done
+	mkdir -p ${fakeweb} && cd ${fakeweb}
+	wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/nginx/dingyue.zip
+	wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/nginx/docker-compose.yml
+	unzip dingyue.zip
+	sed -i "s#weburl#http://$(get_ip):${port}#g" ${fakeweb}/html/dingyue.html
+	sed -i "s#de_port#${port}#g" docker-compose.yml
+	echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成..."
+	docker-compose up -d
+}
+#生成订阅链接
+manage_dingyue(){
+	install_dingyue(){
+		if [ ! -e /root/test/dingyue ]; then
+			set_fakeweb
+			echo ${fakeweb} > /root/test/dingyue
+			echo "${port}" >> /root/test/dingyue
+		else
+			port=$(cat /root/test/dingyue | tail -n 1)
+			echo -e "${Info}你已安装订阅程序..."
+		fi
+		echo -e "\n${Info}首页地址： http://$(get_ip):${port}"
+		echo -e "${Info}按任意键返回订阅链接管理页..."
+		char=`get_char`
+		start_menu_dingyue
+	}
+	uninstall_dingyue(){
+		cd $(cat /root/test/dingyue | head -n 1)
+		docker-compose down
+		cd /root
+		rm -rf $(cat /root/test/dingyue | head -n 1)
+		rm -f /root/test/dingyue /root/test/dy*
+	}
+	manage_url_dingyue(){
+		manage_dingyue_local(){
+			dingyue_ssr(){
+				clear
+				urlsafe_base64(){
+					date=$(echo -n "$1"|base64|sed ':a;N;s/\n/ /g;ta'|sed 's/ //g;s/=//g;s/+/-/g;s/\//_/g')
+					echo -e "${date}"
+				}
+				protocol=$(jq -r '.protocol' /etc/shadowsocks.json)
+				method=$(jq -r '.method' /etc/shadowsocks.json)
+				obfs=$(jq -r '.obfs' /etc/shadowsocks.json)
+				SSRprotocol=$(echo ${protocol} | sed 's/_compatible//g')
+				SSRobfs=$(echo ${obfs} | sed 's/_compatible//g')
+				Remarksbase64=$(urlsafe_base64 "${myinfo}")
+				Groupbase64=$(urlsafe_base64 "我们爱中国")
+				rm -f $(cat /root/test/dingyue | head -n 1)/html/ssr.html
+				jq '.port_password' /etc/shadowsocks.json | sed '1d' | sed '$d' | sed 's#"##g' | sed 's# ##g' | sed 's#,##g' > /root/test/ppj
+				cat /root/test/ppj | while read line; do
+					port=`echo $line|awk -F ':' '{print $1}'`
+					password=`echo $line|awk -F ':' '{print $2}'`
+					SSRPWDbase64=$(urlsafe_base64 "${password}")
+					SSRbase64=$(urlsafe_base64 "$(get_ip):${port}:${SSRprotocol}:${method}:${SSRobfs}:${SSRPWDbase64}/?remarks=${Remarksbase64}&group=${Groupbase64}")
+					echo -e "ssr://${SSRbase64}" >> $(cat /root/test/dingyue | head -n 1)/html/ssr.html
+				done
+				base64 <<< $(cat $(cat /root/test/dingyue | head -n 1)/html/ssr.html) > $(cat /root/test/dingyue | head -n 1)/html/ssr.html
+				touch /root/test/dyssr
+				echo -e "\n${Info}SSR订阅链接已更新"
+				echo -e "${Info}SSR订阅链接：http://$(get_ip):$(cat /root/test/dingyue | tail -n 1)/ssr.html"
+				echo -e "${Info}按任意键返回订阅链接管理页..."
+				char=`get_char`
+				manage_dingyue_local
+			}
+			dingyue_v2ray(){
+				sed -i "s#ps\":.*,#ps\": \"${myinfo}\",#g" $(cat /root/test/v2raypath)
+				v2ray info | grep vmess | sed 's/.\{5\}//' | sed 's/.\{4\}$//' > $(cat /root/test/dingyue | head -n 1)/html/v2ray.html
+				base64 <<< $(cat $(cat /root/test/dingyue | head -n 1)/html/v2ray.html) > $(cat /root/test/dingyue | head -n 1)/html/v2ray.html
+				touch /root/test/dyv2ray
+				echo -e "\n${Info}V2ray订阅链接已更新"
+				echo -e "${Info}V2ray订阅链接：http://$(get_ip):$(cat /root/test/dingyue | tail -n 1)/v2ray.html"
+				echo -e "${Info}按任意键返回订阅链接管理页..."
+				char=`get_char`
+				manage_dingyue_local
+			}
+			dingyue_trojan(){
+				clear
+				pw_trojan=$(jq '.password' /etc/trojan.json)
+				length=$(jq '.password | length' /etc/trojan.json)
+				tr_info=$(echo ${myinfo} |tr -d '\n' |od -An -tx1|tr ' ' %)
+				rm -f $(cat /root/test/dingyue | head -n 1)/html/trojan.html
+				for i in `seq 0 $[length-1]`
+				do
+					password=$(echo $pw_trojan | jq ".[$i]" | sed 's/"//g')
+					echo -e "trojan://${password}@$(cat /root/test/trojan):443?allowInsecure=1&tfo=1#${tr_info}" >> $(cat /root/test/dingyue | head -n 1)/html/trojan.html
+				done
+				base64 <<< $(cat $(cat /root/test/dingyue | head -n 1)/html/trojan.html) > $(cat /root/test/dingyue | head -n 1)/html/trojan.html
+				touch /root/test/dytrojan
+				echo -e "\n${Info}Trojan订阅链接已更新"
+				echo -e "${Info}Trojan订阅链接：http://$(get_ip):$(cat /root/test/dingyue | tail -n 1)/trojan.html"
+				echo -e "${Info}按任意键返回订阅链接管理页..."
+				char=`get_char`
+				manage_dingyue_local
+			}
+			dingyue_all(){
+				clear
+				rm -f $(cat /root/test/dingyue | head -n 1)/html/all.html
+				if [ -e /root/test/dyssr ]; then
+					cat $(cat /root/test/dingyue | head -n 1)/html/ssr.html >> $(cat /root/test/dingyue | head -n 1)/html/all.html
+				fi
+				if [ -e /root/test/dyv2ray ]; then
+					cat $(cat /root/test/dingyue | head -n 1)/html/v2ray.html >> $(cat /root/test/dingyue | head -n 1)/html/all.html
+				fi
+				if [ -e /root/test/dytrojan ]; then
+					cat $(cat /root/test/dingyue | head -n 1)/html/trojan.html >> $(cat /root/test/dingyue | head -n 1)/html/all.html
+				fi
+				echo -e "\n${Info}总订阅链接已更新"
+				echo -e "${Info}总订阅链接：http://$(get_ip):$(cat /root/test/dingyue | tail -n 1)/all.html"
+				echo -e "${Info}按任意键返回订阅链接管理页..."
+				char=`get_char`
+				manage_dingyue_local
+			}
+			clear
+			white_font "\n 订阅链接一键管理脚本 \c" && red_font "[v${sh_ver}]"
+			white_font "        -- 胖波比 --\n"
+			yello_font '————————————————————————————'
+			green_font ' 1.' '  生成/更新SSR订阅'
+			green_font ' 2.' '  生成/更新V2ray订阅'
+			green_font ' 3.' '  生成/更新Trojan订阅'
+			green_font ' 4.' '  生成/更新总订阅'
+			yello_font '————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 5.' '  返回上页'
+			green_font ' 6.' '  退出脚本'
+			yello_font "————————————————————————————\n"
+			read -p "请输入数字[0-6](默认:0)：" num
+			[ -z "${num}" ] && num=0
+			case "$num" in
+				0)
+				start_menu_main
+				;;
+				1)
+				dingyue_ssr
+				;;
+				2)
+				dingyue_v2ray
+				;;
+				3)
+				dingyue_trojan
+				;;
+				4)
+				dingyue_all
+				;;
+				5)
+				manage_url_dingyue
+				;;
+				6)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}请输入正确数字 [0-6]"
+				sleep 2s
+				manage_dingyue_local
+				;;
+			esac
+			manage_dingyue_local
+		}
+		manage_dingyue_remote(){
+			clear
+			echo -e "\n${Tip}使用此功能需要先在远程服务器生成对应的链接!!!"
+			echo -e "${Tip}IP或密码输入错误将会导致订阅链接生成失败!\n"
+			read -p "请输入远程服务器IP：" ipinfo
+			read -p "请输入${ipinfo}的root用户密码：" password
+			read -p "请输入${ipinfo}的SSH端口：" port
+			yello_font '————————————————————————————'
+			green_font ' 1.' '  生成/更新SSR订阅'
+			green_font ' 2.' '  生成/更新V2ray订阅'
+			green_font ' 3.' '  生成/更新Trojan订阅'
+			green_font ' 4.' '  生成/更新总订阅'
+			yello_font '————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 5.' '  返回上页'
+			green_font ' 6.' '  退出脚本'
+			yello_font "————————————————————————————\n"
+			read -p "请输入数字[0-6](默认:0)：" num
+			[ -z "${num}" ] && num=0
+			case "$num" in
+				0)
+				start_menu_main
+				;;
+				1)
+				vpntype='ssr'
+				;;
+				2)
+				vpntype='v2ray'
+				;;
+				3)
+				vpntype='trojan'
+				;;
+				4)
+				vpntype='all'
+				;;
+				5)
+				manage_url_dingyue
+				;;
+				6)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}请输入正确数字 [0-6]"
+				sleep 2s
+				manage_dingyue_remote
+				;;
+			esac
+			sshpass -p ${password} scp -P ${port} root@${ipinfo}:/root/test/dingyue /root/test/dyremote
+			sshpass -p ${password} scp -P ${port} root@${ipinfo}:$(cat /root/test/dyremote | head -n 1)/html/${vpntype}.html /root/test/dy${vpntype}
+			yello_font '————————————————————'
+			green_font ' 1.' '  覆盖链接'
+			green_font ' 2.' '  追加链接'
+			yello_font '————————————————————'
+			choose_dytype(){
+				read -p "请选择链接生成方式[1-2](默认:2)：" num
+				[ -z "${num}" ] && num=2
+				case "$num" in
+					1)
+					cat /root/test/dy${vpntype} > $(cat /root/test/dingyue | head -n 1)/html/${vpntype}.html
+					;;
+					2)
+					cat /root/test/dy${vpntype} >> $(cat /root/test/dingyue | head -n 1)/html/${vpntype}.html
+					;;
+					*)
+					clear
+					echo -e "${Error}请输入正确数字 [1-2]"
+					sleep 2s
+					choose_dytype
+					;;
+				esac
+			}
+			choose_dytype
+			echo -e "\n${Info}订阅链接已更新"
+			echo -e "${Info}订阅链接：http://$(get_ip):$(cat /root/test/dingyue | tail -n 1)/${vpntype}.html"
+			echo -e "${Info}按任意键返回订阅链接管理页..."
+			char=`get_char`
+			manage_url_dingyue
+		}
+		clear
+		white_font "\n 订阅链接一键管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "        -- 胖波比 --\n"
+		yello_font '————————————————————————————'
+		green_font ' 1.' '  使用本地服务生成订阅'
+		green_font ' 2.' '  使用远程服务生成订阅'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 3.' '  返回上页'
+		green_font ' 4.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-4](默认:1)：" num
+		[ -z "${num}" ] && num=1
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			manage_dingyue_local
+			;;
+			2)
+			manage_dingyue_remote
+			;;
+			3)
+			start_menu_dingyue
+			;;
+			4)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-4]"
+			sleep 2s
+			manage_url_dingyue
+			;;
+		esac
+		manage_url_dingyue
+	}
+	start_menu_dingyue(){
+		clear
+		white_font "\n 订阅链接一键管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "        -- 胖波比 --\n"
+		yello_font '————————————————————————————'
+		green_font ' 1.' '  管理订阅'
+		yello_font '————————————————————————————'
+		green_font ' 2.' '  安装订阅'
+		green_font ' 3.' '  卸载订阅'
+		yello_font '————————————————————————————'
+		green_font ' 4.' '  重启订阅'
+		green_font ' 5.' '  关闭订阅'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 6.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-6](默认:1)：" num
+		[ -z "${num}" ] && num=1
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			manage_url_dingyue
+			;;
+			2)
+			install_dingyue
+			;;
+			3)
+			uninstall_dingyue
+			;;
+			4)
+			cd $(cat /root/test/dingyue | head -n 1)
+			docker-compose restart
+			;;
+			5)
+			cd $(cat /root/test/dingyue | head -n 1)
+			docker-compose kill
+			;;
+			6)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-6]"
+			sleep 2s
+			start_menu_dingyue
+			;;
+		esac
+		start_menu_dingyue
+	}
+	start_menu_dingyue
+}
 
-	if [ "$go" == 'n' ];then
-		exit;
+#生成字符二维码
+manage_qrcode(){
+	clear
+	echo && read -p "请输入生成二维码的链接：" num
+	qrencode -o - -t ANSI "${num}"
+	white_font "\n   -- 胖波比 --\n"
+	yello_font '—————二维码生成——————'
+	green_font ' 1.' '  继续生成'
+	yello_font '—————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 2.' '  退出脚本'
+	yello_font "—————————————————————\n"
+	read -p "请输入数字[0-2](默认:0)：" num
+	[ -z "${num}" ] && num=0
+	case "$num" in
+		0)
+		start_menu_main
+		;;
+		1)
+		manage_qrcode
+		;;
+		2)
+		exit 1
+		;;
+		*)
+		clear
+		echo -e "${Error}请输入正确数字 [0-2]"
+		sleep 2s
+		manage_qrcode
+		;;
+	esac
+}
+
+#安装宝塔面板
+manage_btpanel(){
+	set_btpanel(){
+		clear
+		bt default |sed "s#IP#$(get_ip)#g" |sed "s#8888#$(cat /root/test/btport)#g"
+		read -p "是否更改用户密码？[Y/n](默认:n)：" yn
+		[[ -z "${yn}" ]] && yn="n"
+		if [[ ${yn} == [Yy] ]]; then
+			read -p "请输入新密码(默认:pangbobi)：" password
+			[[ -z "${password}" ]] && password='pangbobi'
+			cd /www/server/panel && python tools.py panel $password
+			cd /root
+		fi
+	}
+	install_btpanel(){
+		port=20 && add_firewall
+		port=21 && add_firewall
+		port=80 && add_firewall
+		port=443 && add_firewall
+		port=888 && add_firewall
+		webinfo='请输入宝塔面板访问端口(默认:80)：'
+		check_port && add_firewall && firewall_restart
+		echo -e "${port}" > /root/test/btport
+		echo -e "
++----------------------------------------------------------------------
+| Bt-WebPanel 5.x FOR CentOS/Redhat/Fedora/Ubuntu/Debian
++----------------------------------------------------------------------
+| Copyright © 2015-2018 BT-SOFT(http://www.bt.cn) All rights reserved.
++----------------------------------------------------------------------
+| The WebPanel URL will be http://$(get_ip):${port} when installed.
++----------------------------------------------------------------------
+"
+		echo -e "\033[31m# 注意: 5.x系列Linux面板从2020年1月1日起终止维护，与技术支持，请考虑安装全新的7.x版本 宝塔官网: https://www.bt.cn\033[0m"
+		echo -e "${Info}按任意键继续..."
+		char=`get_char`
+		if [[ ${release} == "centos" ]]; then
+			bt_dow_url='https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/install-centos.sh'
+		else
+			bt_dow_url='https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/install-ubuntu.sh'
+		fi
+		wget -O install-bt.sh $bt_dow_url && chmod +x install-bt.sh
+		startTime=`date +%s`
+		source ./install-bt.sh
+		echo -e "=================================================================="
+		echo -e "\033[32mCongratulations! Installed successfully! \033[0m"
+		echo -e "\033[31m# 注意: 5.x系列Linux面板从2020年1月1日起终止维护，与技术支持，请考虑安装全新的7.x版本 宝塔官网: https://www.bt.cn\033[0m"
+		echo -e "=================================================================="
+		echo  "Bt-Panel: http://$address:$port"
+		echo -e "username: $username"
+		echo -e "password: $password"
+		echo -e "\033[33mWarning:\033[0m"
+		echo -e "\033[33mIf you cannot access the panel, \033[0m"
+		echo -e "\033[33mrelease the following port (${port}|888|443|80|20|21) in the security group\033[0m"
+		echo -e "=================================================================="
+		endTime=`date +%s`
+		((outTime=($endTime-$startTime)/60))
+		echo -e "Time consumed:\033[32m $outTime \033[0mMinute!"
+		rm -f install-bt.sh
+		echo -e "\n${Info}按任意键返回主页..."
+		char=`get_char`
+		start_menu_main
+	}
+	uninstall_btpanel(){
+		wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/bt-uninstall.sh && chmod +x bt-uninstall.sh && ./bt-uninstall.sh
+		rm -f bt-uninstall.sh
+	}
+	start_menu_btpanel(){
+		clear
+		white_font "\n BT-PANEL一键安装脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '———————BT-PANEL管理—————————'
+		green_font ' 1.' '  查看与重设BT-PANEL'
+		yello_font '————————————————————————————'
+		green_font ' 2.' '  安装BT-PANEL'
+		green_font ' 3.' '  卸载BT-PANEL'
+		yello_font '————————————————————————————'
+		green_font ' 4.' '  重启BT-PANEL'
+		green_font ' 5.' '  关闭BT-PANEL'
+		green_font ' 6.' '  启动BT-PANEL'
+		green_font ' 7.' '  查看BT-PANEL状态'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-8](默认:1)：" num
+		[ -z "${num}" ] && num=1
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			set_btpanel
+			;;
+			2)
+			install_btpanel
+			;;
+			3)
+			uninstall_btpanel
+			;;
+			4)
+			bt restart
+			;;
+			5)
+			bt stop
+			;;
+			6)
+			bt start
+			;;
+			7)
+			bt status && sleep 2s
+			;;
+			8)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-8]"
+			sleep 2s
+			start_menu_btpanel
+			;;
+		esac
+		start_menu_btpanel
+	}
+	start_menu_btpanel
+}
+
+#安装Forsaken Mail
+manage_forsakenmail(){
+	clear
+	white_font "\n     ————胖波比————\n"
+	yello_font '——————————————————————————'
+	green_font ' 1.' '  安装Forsaken Mail'
+	green_font ' 2.' '  卸载Forsaken Mail'
+	yello_font "——————————————————————————\n"
+	read -p "请输入数字[1-2](默认:1)：" num
+	[ -z "${num}" ] && num=1
+	if [[ $num == '1' ]]; then
+		echo -e "\n${Tip}请先将域名做好 A记录 和 MX记录 并解析到本机"
+		echo -e "${Tip}否则临时邮箱后缀将是本机IP地址..."
+		echo -e "${Info}按任意键继续..."
+		char=`get_char`
+		#开放25,3000端口的防火墙
+		port=25
+		add_firewall
+		port=3000
+		if [[ -n "$(lsof -i:${port})" ]]; then
+			echo -e "${Error}端口${port}已被占用！请输入新的端口!!!"
+			exit 1
+		fi
+		add_firewall
+		firewall_restart
+		#安装NPM
+		if [[ ${release} == "centos" ]]; then
+			curl -sL https://rpm.nodesource.com/setup_10.x | bash -
+		else
+			curl -sL https://deb.nodesource.com/setup_10.x | bash -
+		fi 
+		#安装Forsaken Mail
+		git clone https://github.com/denghongcai/forsaken-mail.git
+		cd forsaken-mail
+		npm install pm2@latest -g
+		npm install
+		pm2 start bin/www
+		pm2 startup
+		pm2 save
+		cd /root
+		echo -e "\n${Info}首页地址：http://$(get_ip):${port} 或者 http://域名:${port}"
+		echo -e "${Info}按任意键返回首页..."
+		char=`get_char`
+	elif [[ $num == '2' ]]; then
+		rm -rf forsaken-mail
+	else
+		manage_forsakenmail
 	fi
-
-	Install_Main
-
-	echo -e "=================================================================="
-	echo -e "\033[32mCongratulations! Installed successfully!\033[0m"
-	echo -e "=================================================================="
-	echo  "Bt-Panel: http://${getIpAddress}:${panelPort}$auth_path"
-	echo -e "username: $username"
-	echo -e "password: $password"
-	echo -e "\033[33mWarning:\033[0m"
-	echo -e "\033[33mIf you cannot access the panel, \033[0m"
-	echo -e "\033[33mrelease the following port (1314|888|80|443|20|21) in the security group\033[0m"
-	echo -e "=================================================================="
-
-	endTime=`date +%s`
-	((outTime=($endTime-$startTime)/60))
-	echo -e "Time consumed:\033[32m $outTime \033[0mMinute!"
-	echo -e "${Info}请务必及时记录登录信息!"
-	echo -e "\n${Info}按任意键返回主页..."
-	char=`get_char`
-	start_menu_main
 }
 
 #安装ZFAKA
@@ -3198,13 +3340,17 @@ manage_zfaka(){
 		mkdir -p /opt/zfaka && cd /opt/zfaka
 		rm -f docker-compose.yml
 		wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/zfaka/docker-compose.yml
-		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
+		check_port
+		sed -i "s#de_port#${port}#g" docker-compose.yml
+		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成..."
 		docker-compose up -d
-		echo -e "\n${Info}首页地址： http://$(get_ip):666"
-		echo -e "打开网站安装数据库时请修改如下信息"
-		echo -e "请将数据库127.0.0.1改为：mysql"
-		echo -e "请将数据库密码改为：baiyue.one"
-		echo -e "${Info}phpMyAdmin地址：http://$(get_ip):602 用户名：root 密码：baiyue.one"
+		echo -e "\n${Info}首页地址： http://$(get_ip):${port}"
+		echo -e "${Tip}打开网站安装数据库时请修改如下信息"
+		echo -e "${Tip}请将数据库127.0.0.1改为：mysql"
+		echo -e "${Tip}请将数据库密码改为：baiyue.one"
+		echo -e "${Info}phpMyAdmin地址：http://$(get_ip):602"
+		echo -e "${Info}phpMyAdmin用户名：root"
+		echo -e "${Info}phpMyAdmin密码：baiyue.one"
 		echo -e "\n${Info}按任意键返回主页..."
 		char=`get_char`
 		start_menu_main
@@ -3224,20 +3370,23 @@ manage_zfaka(){
 	}
 	start_menu_zfaka(){
 		clear
-		echo && echo -e " ZFAKA一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-			
-————————ZFAKA管理————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装ZFAKA
- ${Green_font_prefix}2.${Font_color_suffix} 卸载ZFAKA
- ${Green_font_prefix}3.${Font_color_suffix} 重启ZFAKA
- ${Green_font_prefix}4.${Font_color_suffix} 停止ZFAKA
- ${Green_font_prefix}5.${Font_color_suffix} 回到主页
- ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
-—————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-6](默认:6):" num
-		[ -z "${num}" ] && num=6
+		white_font "\nZFAKA一键管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '——————ZFAKA管理——————'
+		green_font ' 1.' '  安装ZFAKA'
+		green_font ' 2.' '  卸载ZFAKA'
+		green_font ' 3.' '  重启ZFAKA'
+		green_font ' 4.' '  停止ZFAKA'
+		yello_font '—————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 5.' '  退出脚本'
+		yello_font "—————————————————————\n"
+		read -p "请输入数字[0-5](默认:0):" num
+		[ -z "${num}" ] && num=0
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			install_zfaka
 			;;
@@ -3251,14 +3400,11 @@ manage_zfaka(){
 			stop_zfaka
 			;;
 			5)
-			start_menu_main
-			;;
-			6)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-6]"
+			echo -e "${Error}请输入正确数字 [0-5]"
 			sleep 2s
 			start_menu_zfaka
 			;;
@@ -3276,12 +3422,13 @@ manage_sspanel(){
 				echo -e "${Info}SS-PANEL已安装"
 			else
 				install_docker
-				echo -e "${Info}正在开始安装SS-PANEL..."
 				mkdir -p /opt/sspanel && cd /opt/sspanel
 				rm -f docker-compose.yml
-				echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
 				wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/ssrpanel/docker-compose.yml
-				sed -i "s/sspanel_type/${sspaneltype}/g" /opt/sspanel/docker-compose.yml
+				check_port
+				sed -i "s#de_port#${port}#g" docker-compose.yml
+				sed -i "s/sspanel_type/${sspaneltype}/g" docker-compose.yml
+				echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成..."
 				docker-compose up -d
 				touch /root/test/sp && touch /root/test/ko
 				if [ -e /root/test/cr ]; then
@@ -3300,32 +3447,38 @@ manage_sspanel(){
 					touch /root/test/cr
 				fi
 				if [ ! -e /root/msp.sh ]; then
-					cd /root && wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/ssrpanel/msp.sh && chmod +x msp.sh
+					cd /root
+					wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/ssrpanel/msp.sh
+					chmod +x msp.sh
 				fi
-				clear
-				echo -e "\n${Info}网站首页：http://$(get_ip):603"
+				echo -e "\n${Info}网站首页：http://$(get_ip):${port}"
 				echo -e "${Info}Kodexplorer：http://$(get_ip):604"
 				echo -e "${Info}网站地址：/opt/sspanel/code"
-				echo -e "\n${Info}即将同步数据库并创建管理员账户\n${Info}请输入：./msp.sh"
-				echo -e "${Info}任意键继续..."
+				echo -e "\n${Info}即将同步数据库并创建管理员账户..."
+				echo -e "${Info}请输入：./msp.sh"
+				echo -e "\n${Info}任意键继续..."
 				char=`get_char`
 				exit 1
 			fi
 		}
 		select_sspanel_type(){
 			clear
-			echo -e "\n${Info}SS-PANEL前端只需要安装在面板机！！！
-	-- 胖波比 --
-
-————————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装开发版
- ${Green_font_prefix}2.${Font_color_suffix} 安装稳定版
- ${Green_font_prefix}3.${Font_color_suffix} 回到主页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本 
-————————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-4](默认:4):" num
-			[ -z "${num}" ] && num=4
+			echo -e "\n${Tip}SS-PANEL前端只需要安装在面板机！！！"
+			white_font "	-- 胖波比 --\n"
+			yello_font '—————————————————————'
+			green_font ' 1.' '  安装开发版'
+			green_font ' 2.' '  卸载稳定版'
+			yello_font '—————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  返回上页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "—————————————————————\n"
+			read -p "请输入数字[0-4](默认:1)：" num
+			[ -z "${num}" ] && num=1
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				sspaneltype="dev"
 				install_sspanel
@@ -3335,14 +3488,14 @@ manage_sspanel(){
 				install_sspanel
 				;;
 				3)
-				start_menu_main
+				sspanel_start_menu
 				;;
 				4)
 				exit 1
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				select_sspanel_type
 				;;
@@ -3353,9 +3506,9 @@ manage_sspanel(){
 	#安装后端
 	install_sspanel_back(){
 		node_database(){
-			stty erase ^H && read -p "请输入面板创建的节点序号(例如:3):" nodeid
+			read -p "请输入面板创建的节点序号(例如:3)：" nodeid
 			if [ ! -e /root/test/spdb ]; then
-				stty erase ^H && read -p "请输入面板机域名或IP(默认本机IP):" mysqldomain
+				read -p "请输入面板机域名或IP(默认本机IP)：" mysqldomain
 				[ -z "${mysqldomain}" ] && mysqldomain="127.0.0.1"
 				install_docker
 				docker run -d --name=ssrmu -e NODE_ID=${nodeid} -e API_INTERFACE=glzjinmod -e MYSQL_HOST=${mysqldomain} -e MYSQL_USER=root -e MYSQL_DB=sspanel -e MYSQL_PASS=sspanel --network=host --log-opt max-size=50m --log-opt max-file=3 --restart=always fanvinga/docker-ssrmu
@@ -3367,9 +3520,9 @@ manage_sspanel(){
 			fi
 		}
 		node_webapi(){
-			stty erase ^H && read -p "请输入面板创建的节点序号(例如:3):" nodeid
+			read -p "请输入面板创建的节点序号(例如:3)：" nodeid
 			if [ ! -e /root/test/spwa ]; then
-				stty erase ^H && read -p "请输入面板机域名或IP(默认本机IP):" mysqldomain
+				read -p "请输入面板机域名或IP(默认本机IP)：" mysqldomain
 				[ -z "${mysqldomain}" ] && mysqldomain="127.0.0.1"
 				mysqldomain="http://${mysqldomain}"
 				install_docker
@@ -3383,19 +3536,22 @@ manage_sspanel(){
 		}
 		sspanel_db_menu(){
 			clear
-			echo -e "
-SS-PANEL_UIM 后端对接一键脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-	  
-————————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} Database对接
- ${Green_font_prefix}2.${Font_color_suffix} WebApi对接
- ${Green_font_prefix}3.${Font_color_suffix} 回到主页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-4](默认:4):" num
+			white_font "\nSS-PANEL_UIM 后端对接一键脚本 \c" && red_font "[v${sh_ver}]"
+			white_font "	-- 胖波比 --\n"
+			yello_font '—————————————————————'
+			green_font ' 1.' '  Database对接'
+			green_font ' 2.' '  WebApi对接'
+			yello_font '—————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  返回上页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "—————————————————————\n"
+			read -p "请输入数字[0-4](默认:1)：" num
 			[ -z "${num}" ] && num=4
 			case "$num" in
+				0)
+				start_menu_main
+				;;
 				1)
 				node_database
 				;;
@@ -3403,14 +3559,14 @@ SS-PANEL_UIM 后端对接一键脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color
 				node_webapi
 				;;
 				3)
-				start_menu_main
+				sspanel_start_menu
 				;;
 				4)
 				exit 1
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-4]"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				sspanel_db_menu
 				;;
@@ -3427,21 +3583,23 @@ SS-PANEL_UIM 后端对接一键脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color
 	#管理面板
 	sspanel_start_menu(){
 		clear
-		echo -e "
-SS-PANEL_UIM 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-修改网站配置文件：vi /opt/sspanel/code/config/.config.php
-
-————————————————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装SS-PANEL前端
- ${Green_font_prefix}2.${Font_color_suffix} 安装SS-PANEL后端
- ${Green_font_prefix}3.${Font_color_suffix} 卸载SS-PANEL
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-5](默认:5):" num
-		[ -z "${num}" ] && num=5
+		white_font "\nSS-PANEL_UIM 一键设置脚本 \c" && red_font "[v${sh_ver}]"
+		white_font '	-- 胖波比 --'
+		white_font "修改网站配置文件：vi /opt/sspanel/code/config/.config.php\n"
+		yello_font '————————————————————————————————'
+		green_font ' 1.' '  安装SS-PANEL前端'
+		green_font ' 2.' '  安装SS-PANEL后端'
+		green_font ' 3.' '  卸载SS-PANEL'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 4.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		read -p "请输入数字[0-4](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			install_sspanel_front
 			;;
@@ -3452,14 +3610,11 @@ SS-PANEL_UIM 一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffi
 			uninstall_sspanel
 			;;
 			4)
-			start_menu_main
-			;;
-			5)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-5]"
+			echo -e "${Error}请输入正确数字 [0-4]"
 			sleep 2s
 			sspanel_start_menu
 			;;
@@ -3475,11 +3630,12 @@ manage_kodexplorer(){
 			echo -e "${Info}Kodexplorer已安装!"
 		else
 			install_docker
-			echo -e "${Info}正在安装Kodexplorer..."
-			docker run -d -p 604:80 --name kodexplorer -v /opt/kodcloud:/code baiyuetribe/kodexplorer
+			check_port
+			echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成..."
+			docker run -d -p ${port}:80 --name kodexplorer -v /opt/kodcloud:/code baiyuetribe/kodexplorer
 			touch /root/test/ko
-			echo -e "\n${Info}请访问http://$(get_ip):604"
-			echo -e "${Info}默认宿主机目录/opt/kodcloud"
+			echo -e "\n${Info}首页地址：http://$(get_ip):${port}"
+			echo -e "${Info}默认宿主机目录：/opt/kodcloud"
 			echo -e "\n${Info}按任意键返回主页..."
 			char=`get_char`
 			start_menu_main
@@ -3487,20 +3643,23 @@ manage_kodexplorer(){
 	}
 	start_menu_kodexplorer(){
 		clear
-		echo && echo -e " Kodexplorer一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-
-—————Kodexplorer管理—————
- ${Green_font_prefix}1.${Font_color_suffix} 安装Kodexplorer
- ${Green_font_prefix}2.${Font_color_suffix} 卸载Kodexplorer
- ${Green_font_prefix}3.${Font_color_suffix} 重启Kodexplorer
- ${Green_font_prefix}4.${Font_color_suffix} 停止Kodexplorer
- ${Green_font_prefix}5.${Font_color_suffix} 回到主页
- ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
-—————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-6](默认:6):" num
-		[ -z "${num}" ] && num=6
+		white_font "\nKodexplorer一键管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	   -- 胖波比 --\n"
+		yello_font '—————Kodexplorer管理—————'
+		green_font ' 1.' '  安装Kodexplorer'
+		green_font ' 2.' '  卸载Kodexplorer'
+		green_font ' 3.' '  重启Kodexplorer'
+		green_font ' 4.' '  停止Kodexplorer'
+		yello_font '—————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 5.' '  退出脚本'
+		yello_font "—————————————————————————\n"
+		read -p "请输入数字[0-5](默认:0):" num
+		[ -z "${num}" ] && num=0
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			install_kodexplorer
 			;;
@@ -3519,14 +3678,11 @@ manage_kodexplorer(){
 			docker-compose kill
 			;;
 			5)
-			start_menu_main
-			;;
-			6)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-6]"
+			echo -e "${Error}请输入正确数字 [0-5]"
 			sleep 2s
 			start_menu_kodexplorer
 			;;
@@ -3538,23 +3694,18 @@ manage_kodexplorer(){
 #安装WordPress
 manage_wordpress(){
 	install_wordpress(){
-		unset port
-		until [[ ${port} -ge "1" && ${port} -le "65535" ]]
-		do
-			clear
-			echo -e "\n${Info}请输入网站访问端口,必须是未占用端口,否则安装失败!!!"
-			stty erase ^H && read -p "请输入网站访问端口(默认:80)：" port
-			[ -z "${port}" ] && port=80
-		done
 		install_docker
 		mkdir -p /opt/wordpress && cd /opt/wordpress
 		rm -f docker-compose.yml
 		wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/wordpress/docker-compose.yml
-		sed -i "s#66#${port}#g" docker-compose.yml
-		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
+		check_port
+		sed -i "s#de_port#${port}#g" docker-compose.yml
+		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成..."
 		docker-compose up -d
-		echo -e "\n${Info}首页地址： http://$(get_ip):${port}"
-		echo -e "${Info}phpMyAdmin地址：http://$(get_ip):605 用户名：root 密码：pangbobi"
+		echo -e "\n${Info}首页地址：http://$(get_ip):${port}"
+		echo -e "${Info}phpMyAdmin地址：http://$(get_ip):605"
+		echo -e "${Info}phpMyAdmin用户名：root"
+		echo -e "${Info}phpMyAdmin密码：pangbobi"
 		echo -e "\n${Info}按任意键返回主页..."
 		char=`get_char`
 		start_menu_main
@@ -3574,20 +3725,23 @@ manage_wordpress(){
 	}
 	start_menu_wordpress(){
 		clear
-		echo && echo -e " WordPress一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-
-——————WordPress管理——————
- ${Green_font_prefix}1.${Font_color_suffix} 安装WordPress
- ${Green_font_prefix}2.${Font_color_suffix} 卸载WordPress
- ${Green_font_prefix}3.${Font_color_suffix} 重启WordPress
- ${Green_font_prefix}4.${Font_color_suffix} 停止WordPress
- ${Green_font_prefix}5.${Font_color_suffix} 回到主页
- ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
-—————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-6](默认:6):" num
-		[ -z "${num}" ] && num=6
+		white_font "\nWordPress一键管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '————WordPress管理————'
+		green_font ' 1.' '  安装WordPress'
+		green_font ' 2.' '  卸载WordPress'
+		green_font ' 3.' '  重启WordPress'
+		green_font ' 4.' '  停止WordPress'
+		yello_font '—————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 5.' '  退出脚本'
+		yello_font "—————————————————————\n"
+		read -p "请输入数字[0-5](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			install_wordpress
 			;;
@@ -3601,14 +3755,11 @@ manage_wordpress(){
 			stop_wordpress
 			;;
 			5)
-			start_menu_main
-			;;
-			6)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-6]"
+			echo -e "${Error}请输入正确数字 [0-5]"
 			sleep 2s
 			start_menu_wordpress
 			;;
@@ -3624,7 +3775,7 @@ manage_docker(){
 		echo -e "${Info}首次启动会拉取镜像，国内速度比较慢，请耐心等待完成"
 		docker run -d -p 10086:10086 -v /var/run/docker.sock:/var/run/docker.sock tobegit3hub/seagull
 		echo -e "\n${Info}首页地址： http://$(get_ip):10086"
-		echo -e "\n${Info}按任意键返回主页..."
+		echo -e "${Info}按任意键返回主页..."
 		char=`get_char`
 		start_menu_main
 	}
@@ -3638,41 +3789,42 @@ manage_docker(){
 	}
 	start_menu_docker(){
 		clear
-		echo && echo -e " Docker一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-			
-————————Docker管理———————
- ${Green_font_prefix}1.${Font_color_suffix} 安装Docker
- ${Green_font_prefix}2.${Font_color_suffix} 安装海鸥Docker管理器
- ${Green_font_prefix}3.${Font_color_suffix} 卸载Docker
- ${Green_font_prefix}4.${Font_color_suffix} 删除所有Docker镜像,容器,卷
- ${Green_font_prefix}5.${Font_color_suffix} 回到主页
- ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
-—————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-6](默认:6):" num
-		[ -z "${num}" ] && num=6
+		white_font "\n Docker一键管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	   -- 胖波比 --\n"
+		yello_font '————————Docker管理———————'
+		green_font ' 1.' '  安装Docker'
+		green_font ' 2.' '  卸载Docker'
+		yello_font '—————————————————————————'
+		green_font ' 3.' '  安装海鸥Docker管理器'
+		green_font ' 4.' '  删除所有Docker镜像,容器,卷'
+		yello_font '—————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 5.' '  退出脚本'
+		yello_font "—————————————————————————\n"
+		read -p "请输入数字[0-5](默认:3)：" num
+		[ -z "${num}" ] && num=3
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			install_docker
 			;;
 			2)
-			install_seagull
+			uninstall_docker
 			;;
 			3)
-			uninstall_docker
+			install_seagull
 			;;
 			4)
 			uninstall_docker_all
 			;;
 			5)
-			start_menu_main
-			;;
-			6)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-6]"
+			echo -e "${Error}请输入正确数字 [0-5]"
 			sleep 2s
 			start_menu_docker
 			;;
@@ -3683,13 +3835,12 @@ manage_docker(){
 
 #安装Caddy
 install_caddy(){
-	file="/usr/local/caddy/"
+	file="/usr/local/caddy"
 	caddy_file="/usr/local/caddy/caddy"
 	caddy_conf_file="/usr/local/caddy/Caddyfile"
-	Info_font_prefix="\033[32m" && Error_font_prefix="\033[31m" && Info_background_prefix="\033[42;37m" && Error_background_prefix="\033[41;37m" && Font_suffix="\033[0m"
 
 	check_installed_status(){
-		[[ ! -e ${caddy_file} ]] && echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy 没有安装，请检查 !" && install_caddy
+		[[ ! -e ${caddy_file} ]] && echo -e "${Error}Caddy 没有安装，请检查 !" && install_caddy
 	}
 	Download_caddy(){
 		[[ ! -e ${file} ]] && mkdir "${file}"
@@ -3703,7 +3854,7 @@ install_caddy(){
 		else
 			extension_all="?license=personal"
 		fi
-		
+		bit=`uname -m`
 		if [[ ${bit} == "x86_64" ]]; then
 			wget --no-check-certificate -O "caddy_linux.tar.gz" "https://caddyserver.com/download/linux/amd64${extension_all}"
 		elif [[ ${bit} == "i386" || ${bit} == "i686" ]]; then
@@ -3711,12 +3862,12 @@ install_caddy(){
 		elif [[ ${bit} == "armv7l" ]]; then
 			wget --no-check-certificate -O "caddy_linux.tar.gz" "https://caddyserver.com/download/linux/arm7${extension_all}"
 		else
-			echo -e "${Error_font_prefix}[错误]${Font_suffix} 不支持 [${bit}] !请向本站反馈[]中的名称，我会看看是否可以添加支持。" && exit 1
+			echo -e "${Error}不支持 ${bit}!" && exit 1
 		fi
-		[[ ! -e "caddy_linux.tar.gz" ]] && echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy 下载失败 !" && exit 1
+		[[ ! -e "caddy_linux.tar.gz" ]] && echo -e "${Error}Caddy 下载失败 !" && exit 1
 		tar zxf "caddy_linux.tar.gz"
 		rm -rf "caddy_linux.tar.gz"
-		[[ ! -e ${caddy_file} ]] && echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy 解压失败或压缩文件错误 !" && exit 1
+		[[ ! -e ${caddy_file} ]] && echo -e "${Error}Caddy 解压失败或压缩文件错误 !" && exit 1
 		rm -rf LICENSES.txt
 		rm -rf README.txt 
 		rm -rf CHANGES.txt
@@ -3726,46 +3877,62 @@ install_caddy(){
 	Service_caddy(){
 		if [[ ${release} = "centos" ]]; then
 			if ! wget --no-check-certificate https://raw.githubusercontent.com/ToyoDAdoubi/doubi/master/service/caddy_centos -O /etc/init.d/caddy; then
-				echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy服务 管理脚本下载失败 !" && exit 1
+				echo -e "${Error}Caddy服务 管理脚本下载失败 !" && exit 1
 			fi
 			chmod +x /etc/init.d/caddy
 			chkconfig --add caddy
 			chkconfig caddy on
 		else
 			if ! wget --no-check-certificate https://raw.githubusercontent.com/ToyoDAdoubi/doubi/master/service/caddy_debian -O /etc/init.d/caddy; then
-				echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy服务 管理脚本下载失败 !" && exit 1
+				echo -e "${Error}Caddy服务 管理脚本下载失败 !" && exit 1
 			fi
 			chmod +x /etc/init.d/caddy
 			update-rc.d -f caddy defaults
 		fi
 	}
 	caddy_install(){
-		if [[ -e ${caddy_file} ]]; then
-			echo && echo -e "${Error_font_prefix}[信息]${Font_suffix} 检测到 Caddy 已安装，是否继续安装(覆盖更新)？[y/N]"
-			read -e -p "(默认: n):" yn
-			[[ -z ${yn} ]] && yn="n"
-			if [[ ${yn} == [Nn] ]]; then
-				echo && echo "已取消..."
-				sleep 2s
-				start_menu_caddy
+		if [ ! -e /root/test/fakeweb ]; then
+			if [[ -e ${caddy_file} ]]; then
+				echo && echo -e "${Info}检测到 Caddy 已安装，是否继续安装(覆盖更新)？[y/n]"
+				read -e -p "(默认:n)：" yn
+				[[ -z ${yn} ]] && yn="n"
+				if [[ ${yn} == [Nn] ]]; then
+					echo && echo "已取消..."
+					sleep 2s
+					start_menu_caddy
+				fi
 			fi
+			Download_caddy
+			Service_caddy
+			#设置Caddy监听地址文件夹
+			fakesite='/opt/fakeweb'
+			if [ ! -d "${fakesite}" ]; then
+				mkdir -p ${fakesite} && cd ${fakesite}
+				wget https://raw.githubusercontent.com/AmuyangA/public/master/web.zip
+				unzip web.zip
+			fi
+			base64 -d <<< aG9zdF9uYW1lOmRlX3BvcnQgew0KICAgIGd6aXANCiAgICByb290IC9vcHQvZmFrZXdlYg0KfQ== > $caddy_conf_file
+			webinfo='请输入网站访问端口(未占用端口)(默认:80)：'
+			check_port
+			add_firewall
+			firewall_restart
+			sed -i "s#de_port#${port}#g" $caddy_conf_file
+			sed -i "s#host_name#$(get_ip)#g" $caddy_conf_file
+			service caddy restart
+			touch /root/test/fakeweb
+			echo -e "\n${Info}Caddy安装完成！任意键进入Caddy配置页..."
+			echo -e "${Info}首页地址：http://$(get_ip):${port}"
+			char=`get_char`
+			manage_caddy
+		else
+			echo -e "${Info}你已安装且并未卸载过伪装，任意键返回主页..."
+			char=`get_char`
+			start_menu_main
 		fi
-		Download_caddy
-		Service_caddy
-		#设置Caddy监听地址文件夹
-		mkdir /usr/local/caddy/listenport
-		echo -e "${Info}正在下载网页。请稍等···"
-		svn checkout "https://github.com/AmuyangA/public/trunk/html" /usr/local/caddy/listenport
-		set_caddy
-		echo && echo -e " Caddy 使用命令：${caddy_conf_file}
- 日志文件：cat /tmp/caddy.log
- 使用说明：service caddy start | stop | restart | status
- 或者使用：/etc/init.d/caddy start | stop | restart | status
- ${Info}Caddy 安装完成！" && echo
 	}
-	uninstall_caddy(){
+	caddy_uninstall(){
 		check_installed_status
-		echo && echo "确定要卸载 Caddy ? [y/N]"
+		echo && echo "确定要卸载 Caddy ? [y/n]："
 		read -e -p "(默认: n):" unyn
 		[[ -z ${unyn} ]] && unyn="n"
 		if [[ ${unyn} == [Yy] ]]; then
@@ -3777,200 +3944,248 @@ install_caddy(){
 				update-rc.d -f caddy remove
 			fi
 			[[ -s /tmp/caddy.log ]] && rm -rf /tmp/caddy.log
-			rm -rf ${caddy_file}
-			rm -rf ${caddy_conf_file}
-			rm -rf /etc/init.d/caddy
 			#删除Caddy监听地址文件夹
-			rm -rf /usr/local/caddy
-			[[ ! -e ${caddy_file} ]] && echo && echo -e "${Info_font_prefix}[信息]${Font_suffix} Caddy 卸载完成 !" && echo && exit 1
-			echo && echo -e "${Error_font_prefix}[错误]${Font_suffix} Caddy 卸载失败 !" && echo
+			rm -rf ${file} /etc/init.d/caddy
+			rm -f /root/test/fakeweb
+			[[ ! -e ${caddy_file} ]] && echo && echo -e "${Info}Caddy 卸载完成 !" && echo && exit 1
+			echo && echo -e "${Error}Caddy 卸载失败 !" && echo
 		else
 			echo && echo "卸载已取消..."
 			sleep 2s
 			start_menu_caddy
 		fi
 	}
-	#配置Caddy
-	set_caddy_ip(){
-		clear
-		port=80
-		add_firewall
-		port=443
-		add_firewall
-		firewall_restart
-		echo "$(get_ip):80 {
-	gzip
-	root /usr/local/caddy/listenport
-}
-$(get_ip):443 {
-	gzip
-	root /usr/local/caddy/listenport
-}" > /usr/local/caddy/Caddyfile
-		service caddy restart
-		echo -e "${Info}Caddy重启成功!"
-		sleep 2s
-	}
-	set_caddy_domain(){
-		clear
-		echo && echo -e " Caddy监听一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --"
-		stty erase ^H && read -p "请输入你的域名:" domain
-		stty erase ^H && read -p "请输入你的邮箱:" yemail
-		echo "$domain {
-		gzip
-		tls $yemail
-		root /usr/local/caddy/listenport
-		}" > /usr/local/caddy/Caddyfile
-		service caddy restart
-		echo -e "${Info}Caddy重启成功!"
-		sleep 2s
-	}
-	caddy_back(){
-		caddy_back_ip(){
-			clear
-			port=80
-			add_firewall
-			port=443
-			add_firewall
-			firewall_restart
-			stty erase ^H && read -p "请输入代理端口[1-65535]:" port
-			echo "$(get_ip):80 {
-	gzip
-	proxy / localhost:$port
-}
-$(get_ip):443 {
-	gzip
-	proxy / localhost:$port
-}" > /usr/local/caddy/Caddyfile
-			service caddy restart
-			echo -e "${Info}Caddy重启成功!"
-			sleep 2s
-		}
-		caddy_back_domain(){
-			clear
-			echo && echo -e " Caddy反向代理一键设置
-	-- 胖波比 --"
-			stty erase ^H && read -p "请输入你的域名:" domain
-			stty erase ^H && read -p "请输入代理端口[1-65535]:" port
-			stty erase ^H && read -p "请输入你的邮箱:" yemail
-			echo "$domain {
-			gzip
-			tls $yemail
-			proxy / localhost:$port
-			}" > /usr/local/caddy/Caddyfile
-			service caddy restart
-			echo -e "${Info}Caddy重启成功!"
-			sleep 2s
-		}
-		caddy_back_menu(){
-			clear
-			echo && echo -e " Caddy反向代理管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-
-——————————Caddy反向代理—————————
- ${Green_font_prefix}1.${Font_color_suffix} 使用本机IP
- ${Green_font_prefix}2.${Font_color_suffix} 使用已解析生效的域名
- ${Green_font_prefix}3.${Font_color_suffix} 回到Caddy管理页
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-5](默认:5):" num
-			[ -z "${num}" ] && num=5
-			case "$num" in
-				1)
-				caddy_back_ip
-				;;
-				2)
-				caddy_back_domain
-				;;
-				3)
-				manage_caddy
-				;;
-				4)
-				start_menu_main
-				;;
-				5)
-				exit 1
-				;;
-				*)
-				clear
-				echo -e "${Error}:请输入正确数字 [1-5]"
-				sleep 2s
-				caddy_back_menu
-				;;
-			esac
-			caddy_back_menu
-		}
-		caddy_back_menu
-	}
 	manage_caddy(){
-			clear
-			echo && echo -e " Caddy一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	  -- 胖波比 --
-手动修改配置文件：vi /usr/local/caddy/Caddyfile
-
-————————————Caddy管理———————————
- ${Green_font_prefix}1.${Font_color_suffix} 使用本机IP
- ${Green_font_prefix}2.${Font_color_suffix} 使用已解析生效的域名
- ${Green_font_prefix}3.${Font_color_suffix} 反向代理
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-5](默认:5):" num
-			[ -z "${num}" ] && num=5
-			case "$num" in
-				1)
-				set_caddy_ip
-				;;
-				2)
-				set_caddy_domain
-				;;
-				3)
-				caddy_back
-				;;
-				4)
-				start_menu_main
-				;;
-				5)
-				exit 1
-				;;
-				*)
-				clear
-				echo -e "${Error}:请输入正确数字 [1-5]"
-				sleep 2s
-				manage_caddy
-				;;
-			esac
+		manage_caddy_success(){
+			cat $caddy_conf_file |tr -d "\r" > /root/test/temp
+			cp /root/test/temp $caddy_conf_file
+			service caddy restart
+			echo -e "${Info}修改并成功重启Caddy，2秒后回到配置管理页..."
+			sleep 2s
 			manage_caddy
 		}
+		choose_hosttype(){
+			hosttype=$1
+			caddy_back_core(){
+				yello_font '——————————————————————————————'
+				green_font ' 1.' '  本机作为代理目标网站'
+				green_font ' 2.' '  外站作为代理目标网站'
+				yello_font "——————————————————————————————\n"
+				read -p "请输入数字[1-2](默认:2)：" num
+				[ -z "${num}" ] && num=2
+				if [ ${num} == '2' ]; then
+					read -p "请输入代理目标网站[请输入完整网址](默认:https://www.bilibili.com)：" ddomain
+					[ -z "${ddomain}" ] && ddomain='https://www.bilibili.com'
+				elif [ ${num} == '1' ]; then
+					read -p "请输入本机网站端口：" port
+					ddomain="localhost:${port}"
+				else
+					caddy_back_core
+				fi
+				line=$(grep -n '/opt/fakeweb' ${caddy_conf_file} |tail -1 |awk -F ':'  '{print $1}')
+				sed -i "${line}s#root /opt/fakeweb#proxy / ${ddomain}#" $caddy_conf_file
+			}
+			caddy_ip(){
+				base64 -d <<< aG9zdF9uYW1lOmRlX3BvcnQgew0KICAgIGd6aXANCiAgICByb290IC9vcHQvZmFrZXdlYg0KfQ== >> $caddy_conf_file
+				ydomain=$(get_ip)
+				if [ ${hosttype} == '2' ]; then
+					caddy_back_core
+				fi
+			}
+			caddy_domain(){
+				clear && echo
+				read -p "请输入已解析到本机的域名：" ydomain
+				caddy_domain_http(){
+					clear && echo
+					base64 -d <<< aG9zdF9uYW1lOmRlX3BvcnQgew0KICAgIGd6aXANCiAgICByb290IC9vcHQvZmFrZXdlYg0KfQ== >> $caddy_conf_file
+					webinfo='请输入监听端口(未占用端口)(默认:80)：'
+					check_port
+					sed -i "s#host_name#host_name:${port}#g" $caddy_conf_file
+					if [ ${hosttype} == '2' ]; then
+						caddy_back_core
+					fi
+				}
+				caddy_domain_https(){
+					clear && echo
+					if [[ -n "$(lsof -i:443)" ]]; then
+						echo -e "${Error}端口443已被占用！无法使用HTTPS!"
+						sleep 2s && caddy_domain
+					elif [[ -n "$(lsof -i:80)" ]]; then
+						echo -e "${Error}端口80已被占用！无法自动申请SSL证书!"
+						sleep 2s && caddy_domain
+					else
+						read -p "请输入用来申请证书的邮箱：" yemail
+						base64 -d <<< aG9zdF9uYW1lIHsNCiAgICBnemlwDQogICAgdGxzIHVzZXJfZW1haWwNCiAgICByb290IC9vcHQvZmFrZXdlYg0KfQ== >> $caddy_conf_file
+						sed -i "s#user_email#${yemail}#g" $caddy_conf_file
+						if [ ${hosttype} == '2' ]; then
+							caddy_back_core
+						fi
+						crt_position='/.caddy/acme/acme-v02.api.letsencrypt.org/sites'
+						echo -e "\n${Info}证书及密钥位置：${crt_position}"
+						echo -e "${Tip}证书：${crt_position}/${ydomain}.crt"
+						echo -e "${Tip}密钥：${crt_position}/${ydomain}.key"
+						echo -e "${Info}按任意键继续..."
+						char=`get_char`
+					fi
+				}
+				white_font "\n	  -- 胖波比 --\n"
+				yello_font '——————————————————————————————'
+				green_font ' 1.' '  使用HTTP'
+				green_font ' 2.' '  使用HTTPS'
+				yello_font '——————————————————————————————'
+				green_font ' 0.' '  回到主页'
+				green_font ' 3.' '  返回上页'
+				green_font ' 4.' '  退出脚本'
+				yello_font "——————————————————————————————\n"
+				read -p "请输入数字[0-4](默认:1)：" num
+				[ -z "${num}" ] && num=1
+				case "$num" in
+					0)
+					start_menu_main
+					;;
+					1)
+					caddy_domain_http
+					;;
+					2)
+					caddy_domain_https
+					;;
+					3)
+					choose_hosttype
+					;;
+					4)
+					exit 1
+					;;
+					*)
+					clear
+					echo -e "${Error}请输入正确数字 [0-4]"
+					sleep 2s
+					caddy_domain
+					;;
+				esac
+			}
+			clear
+			white_font "\n	  -- 胖波比 --\n"
+			yello_font '——————————————————————————————'
+			green_font ' 1.' '  使用本机IP'
+			green_font ' 2.' '  使用解析到本机的域名'
+			yello_font '——————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 3.' '  返回上页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "——————————————————————————————\n"
+			read -p "请输入数字[0-4](默认:1)：" num
+			[ -z "${num}" ] && num=1
+			case "$num" in
+				0)
+				start_menu_main
+				;;
+				1)
+				caddy_ip
+				;;
+				2)
+				caddy_domain
+				;;
+				3)
+				manage_caddy
+				;;
+				4)
+				exit 1
+				;;
+				*)
+				clear
+				echo -e "${Error}请输入正确数字 [0-4]"
+				sleep 2s
+				choose_hosttype
+				;;
+			esac
+			sed -i "s#host_name#${ydomain}#g" $caddy_conf_file
+		}
+		add_caddy(){
+			choose_hosttype '1'
+		}
+		delete_caddy(){
+			clear
+			echo -e "\n${Info}懒得写了，自己手动设置，谢谢.."
+			echo -e "${Info}按任意键继续..."
+			char=`get_char`
+			vi ${caddy_conf_file}
+		}
+		caddy_back(){
+			choose_hosttype '2'
+		}
+		clear
+		white_font "\n Caddy配置管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font '	  -- 胖波比 --'
+		white_font "手动修改配置文件：vi ${caddy_conf_file}\n"
+		yello_font '——————————Caddy配置管理—————————'
+		green_font ' 1.' '  添加监听端口'
+		green_font ' 2.' '  删除监听端口'
+		green_font ' 3.' '  反向代理'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 4.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		read -p "请输入数字[0-4](默认:0)：" num
+		[ -z "${num}" ] && num=0
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			add_caddy
+			;;
+			2)
+			delete_caddy
+			;;
+			3)
+			caddy_back
+			;;
+			4)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-4]"
+			sleep 2s
+			manage_caddy
+			;;
+		esac
+		manage_caddy_success
+		manage_caddy
+	}
 	#开始菜单
 	start_menu_caddy(){
 		clear
-		echo && echo -e " Caddy一键安装脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-		
-————————————Caddy安装————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装Caddy
- ${Green_font_prefix}2.${Font_color_suffix} 管理Caddy
- ${Green_font_prefix}3.${Font_color_suffix} 卸载Caddy
- ${Green_font_prefix}4.${Font_color_suffix} 重启Caddy
- ${Green_font_prefix}5.${Font_color_suffix} 关闭Caddy
- ${Green_font_prefix}6.${Font_color_suffix} 启动Caddy
- ${Green_font_prefix}7.${Font_color_suffix} 查看Caddy状态
- ${Green_font_prefix}8.${Font_color_suffix} 回到主页
- ${Green_font_prefix}9.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-9](默认:9):" num
-		[ -z "${num}" ] && num=9
+		white_font "\n Caddy一键安装脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '—————————Caddy管理——————————'
+		green_font ' 1.' '  配置Caddy'
+		yello_font '————————————————————————————'
+		green_font ' 2.' '  安装Caddy'
+		green_font ' 3.' '  卸载Caddy'
+		yello_font '————————————————————————————'
+		green_font ' 4.' '  重启Caddy'
+		green_font ' 5.' '  关闭Caddy'
+		green_font ' 6.' '  启动Caddy'
+		green_font ' 7.' '  查看Caddy状态'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-8](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
-			1)
-			caddy_install
+			0)
+			start_menu_main
 			;;
-			2)
+			1)
 			manage_caddy
 			;;
+			2)
+			caddy_install
+			;;
 			3)
-			uninstall_caddy
+			caddy_uninstall
 			;;
 			4)
 			service caddy restart
@@ -3985,18 +4200,16 @@ $(get_ip):443 {
 			service caddy status
 			;;
 			8)
-			start_menu_main
-			;;
-			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-9]"
+			echo -e "${Error}请输入正确数字 [0-8]"
 			sleep 2s
 			start_menu_caddy
 			;;
 		esac
+		start_menu_caddy
 	}
 	extension=$2
 	start_menu_caddy
@@ -4005,241 +4218,230 @@ $(get_ip):443 {
 #安装Nginx
 install_nginx(){
 	nginx_install(){
-		if [[ "${release}" == "centos" ]]; then
-			setsebool -P httpd_can_network_connect 1
-			touch /etc/yum.repos.d/nginx.repo
-			cat <<EOF > /etc/yum.repos.d/nginx.repo
+		if [ ! -e /root/test/fakeweb ]; then
+			if [[ ${release} == "centos" ]]; then
+				setsebool -P httpd_can_network_connect 1
+				touch /etc/yum.repos.d/nginx.repo
+				cat <<EOF > /etc/yum.repos.d/nginx.repo
 [nginx]
 name=nginx repo
 baseurl=http://nginx.org/packages/mainline/centos/7/\$basearch/
 gpgcheck=0
 enabled=1
 EOF
-			yum -y install nginx
-		elif [[ "${release}" == "debian" ]]; then
-			echo "deb http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
-			echo "deb-src http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
-			wget http://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
-			apt-key add nginx_signing.key >/dev/null 2>&1
-			apt-get update
-			apt-get -y install nginx
-			rm -rf add nginx_signing.key >/dev/null 2>&1
-		elif [[ "${release}" == "ubuntu" ]]; then
-			echo "deb http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
-			echo "deb http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
-			echo "deb-src http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
-			echo "deb-src http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
-			wget -N --no-check-certificate https://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
-			apt-key add nginx_signing.key >/dev/null 2>&1
-			apt-get update
-			apt-get -y install nginx
-			rm -rf add nginx_signing.key >/dev/null 2>&1
+				yum -y install nginx
+			elif [[ ${release} == "debian" ]]; then
+				echo "deb http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
+				echo "deb-src http://nginx.org/packages/debian/ stretch nginx" >> /etc/apt/sources.list
+				wget http://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
+				apt-key add nginx_signing.key >/dev/null 2>&1
+				apt-get update
+				apt-get -y install nginx
+				rm -rf add nginx_signing.key >/dev/null 2>&1
+			elif [[ ${release} == "ubuntu" ]]; then
+				echo "deb http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
+				echo "deb http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
+				echo "deb-src http://nginx.org/packages/mainline/ubuntu/ bionic nginx" >> /etc/apt/sources.list
+				echo "deb-src http://nginx.org/packages/mainline/ubuntu/ xenial nginx" >> /etc/apt/sources.list
+				wget -N --no-check-certificate https://nginx.org/keys/nginx_signing.key >/dev/null 2>&1
+				apt-key add nginx_signing.key >/dev/null 2>&1
+				apt-get update
+				apt-get -y install nginx
+				rm -rf add nginx_signing.key >/dev/null 2>&1
+			fi
+			fakesite='/opt/fakeweb'
+			if [ ! -d "${fakesite}" ]; then
+				mkdir -p ${fakesite} && cd ${fakesite}
+				wget https://raw.githubusercontent.com/AmuyangA/public/master/web.zip
+				unzip web.zip
+			fi
+			base64 -d <<< c2VydmVyIHsNCiAgICBsaXN0ZW4gZGVfcG9ydDsNCiAgICBzZXJ2ZXJfbmFtZSBsb2NhbGhvc3Q7DQogICAgbG9jYXRpb24gLyB7DQogICAgICAgIHJvb3QgICAvb3B0L2Zha2V3ZWI7DQogICAgICAgIGluZGV4ICBpbmRleC5odG1sIGluZGV4Lmh0bTsNCiAgICB9DQogICAgZXJyb3JfcGFnZSAgIDUwMCA1MDIgNTAzIDUwNCAgLzUweC5odG1sOw0KICAgIGxvY2F0aW9uID0gLzUweC5odG1sIHsNCiAgICAgICAgcm9vdCAgIC9vcHQvZmFrZXdlYjsNCiAgICB9DQp9 > /etc/nginx/conf.d/default.conf
+			webinfo='请输入网站访问端口(未占用端口)(默认:80)：'
+			check_port
+			add_firewall
+			firewall_restart
+			sed -i "s#de_port#${port}#g" /etc/nginx/conf.d/default.conf
+			systemctl start nginx.service
+			touch /root/test/fakeweb
+			echo -e "\n${Info}Nginx安装完成！任意键进入Nginx配置页..."
+			echo -e "${Info}首页地址：http://$(get_ip):${port}"
+			char=`get_char`
+			set_nginx
+		else
+			echo -e "${Info}你已安装且并未卸载过伪装，任意键返回主页..."
+			char=`get_char`
+			start_menu_main
 		fi
-		echo -e "${Info}安装完成！2秒后开启Nginx"
-		sleep 2s
-		systemctl start nginx.service
-		echo -e "${Info}Nginx已开启！2秒后回到管理页"
-		sleep 2s
-		manage_nginx
+	}
+	nginx_uninstall(){
+		if [[ ${release} == "centos" ]]; then
+			yum --purge remove nginx
+		else
+			apt-get --purge remove nginx
+		fi
+		rm -f /root/test/fakeweb
 	}
 	#配置Nginx
 	set_nginx(){
 		#配置结尾
 		set_nginx_success(){
-			echo -e "${Info}修改Nginx配置成功，2秒后重启Nginx"
-			sleep 2s
 			systemctl restart nginx.service
-			echo -e "${Info}Nginx重启成功，2秒后回到配置管理页"
+			echo -e "${Info}修改并成功重启Nginx，2秒后回到配置管理页..."
 			sleep 2s
 			set_nginx_menu
 		}
-		#默认配置
-		set_nginx_first(){
-			#设置Nginx网页
-			rm -f /usr/share/nginx/html/index.html
-			echo -e "${Info}正在下载网页。请稍等···"
-			sleep 2s
-			svn checkout "https://github.com/AmuyangA/public/trunk/html" /usr/share/nginx/html
-			#修改Nginx配置文件
-			echo "server {
-	listen 80;
-	listen 443;
-	server_name  localhost;
-	location / {
-		root /usr/share/nginx/html;
-		index  index.html index.htm;
-	}
-	error_page   500 502 503 504  /50x.html;
-	location = /50x.html {
-		root /usr/share/nginx/html;
-	}
-}" > /etc/nginx/conf.d/default.conf
-			touch /root/test/ng
-			port=80
-			add_firewall
-			port=443
-			add_firewall
-			firewall_restart
-			echo -e "${Info}已默认添加80,443端口"
-			sleep 2s
-			set_nginx_success
-		}
 		#添加监听端口
 		add_nginx(){
-			set_nginx_first
-			cat /etc/nginx/conf.d/default.conf
-			stty erase ^H && read -p "请输入端口[1-65535],不可重复,(默认:8080):" port
-			[ -z "${port}" ] && port=8080
+			webinfo='请输入监听端口[1-65535](默认:80)：'
+			check_port
 			add_firewall
 			firewall_restart
-			sed -i "2i\\\tlisten ${port};" /etc/nginx/conf.d/default.conf
+			sed -i "2i listen ${port};" /etc/nginx/conf.d/default.conf
+			sed -i "2s/^/    /" /etc/nginx/conf.d/default.conf
 			set_nginx_success
 		}
 		#删除监听端口
 		delete_nginx(){
-			cat /etc/nginx/conf.d/default.conf
-			stty erase ^H && read -p "请输入端口[1-65535],已有端口,(默认:8080):" port
-			[ -z "${port}" ] && port=8080
-			port=$(sed -n -e '/${port}/=' /etc/nginx/conf.d/default.conf)
-			sed -i '${port} d' /etc/nginx/conf.d/default.conf
-			set_nginx_success
+			clear 
+			echo -e "\n{Info}已监听端口有：$(grep listen /etc/nginx/conf.d/default.conf |sed 's# ##g' |sed 's#;##g' |awk -F 'n' '{print $2}' |xargs)"
+			read -p "请输入端口[1-65535]中已监听端口：" port
+			if [ `grep -c "listen ${port}" /etc/nginx/conf.d/default.conf` -eq '1' ]; then
+				sed -i "/listen ${port}/d" /etc/nginx/conf.d/default.conf
+				delete_firewall
+				firewall_restart
+				set_nginx_success
+			else
+				echo -e "${Error}端口${port}并未被监听，请输入屏幕显示的已监听端口..."
+				sleep 2s
+				delete_nginx
+			fi
 		}
 		#反向代理
 		nginx_back(){
-			clear
-			echo && echo -e " Nginx反向代理一键设置
-    -- 胖波比 --"
-			stty erase ^H && read -p "请输入你的域名(默认本机IP):" domain
-			[ -z "${domain}" ] && domain=$(get_ip)
-			stty erase ^H && read -p "请输入代理端口[1-65535]:" port
-			echo "server {
-	listen 80;
-	server_name  $domain;
-	location / {
-		proxy_pass http://$(get_ip):$port;
-	}
-}" > /etc/nginx/conf.d/default.conf
+			webinfo='请输入被代理端口[1-65535](默认:80)：'
+			check_port
+			add_firewall
+			firewall_restart
+			read -p "请输入已解析到本机的域名(默认本机IP)：" ydomain
+			[ -z "${ydomain}" ] && ydomain='localhost'
+			read -p "请输入代理目标网站[请输入完整网址](默认:https://www.bilibili.com)：" ddomain
+			[ -z "${ddomain}" ] && ddomain='https://www.bilibili.com'
+			base64 -d <<< c2VydmVyIHsNCiAgICBsaXN0ZW4gZGVfcG9ydDsNCiAgICBzZXJ2ZXJfbmFtZSAgaG9zdF9uYW1lOw0KICAgIGxvY2F0aW9uIC8gew0KICAgICAgICBwcm94eV9wYXNzIGRlc3RpbmF0aW9uX25hbWU7DQogICAgfQ0KfQ== >> /etc/nginx/conf.d/default.conf
+			sed -i "s#de_port#${port}#g" /etc/nginx/conf.d/default.conf
+			sed -i "s#host_name#${ydomain}#g" /etc/nginx/conf.d/default.conf
+			sed -i "s#destination_name#${ddomain}#g" /etc/nginx/conf.d/default.conf
 			set_nginx_success
 		}
 		#配置方式选择
 		set_nginx_menu(){
 			clear
-			echo && echo -e " Nginx配置管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	  -- 胖波比 --
-手动修改配置文件：vi /etc/nginx/conf.d/default.conf
-		
-——————————Nginx配置管理—————————
- ${Green_font_prefix}1.${Font_color_suffix} 恢复默认设置
- ${Green_font_prefix}2.${Font_color_suffix} 添加监听端口(不可添加已占用端口)
- ${Green_font_prefix}3.${Font_color_suffix} 删除监听端口
- ${Green_font_prefix}4.${Font_color_suffix} 反向代理
- ${Green_font_prefix}5.${Font_color_suffix} 回到主页
- ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-			stty erase ^H && read -p "请输入数字 [1-6](默认:6):" num
-			[ -z "${num}" ] && num=6
+			white_font "\n Nginx配置管理脚本 \c" && red_font "[v${sh_ver}]"
+			white_font '	  -- 胖波比 --'
+			white_font "手动修改配置文件：vi /etc/nginx/conf.d/default.conf\n"
+			yello_font '——————————Nginx配置管理—————————'
+			green_font ' 1.' '  添加监听端口'
+			green_font ' 2.' '  删除监听端口'
+			green_font ' 3.' '  反向代理'
+			yello_font '————————————————————————————————'
+			green_font ' 0.' '  回到主页'
+			green_font ' 4.' '  退出脚本'
+			yello_font "————————————————————————————————\n"
+			read -p "请输入数字[0-4](默认:0)：" num
+			[ -z "${num}" ] && num=0
 			case "$num" in
-				1)
-				set_nginx_first
-				;;
-				2)
-				add_nginx
-				;;
-				3)
-				delete_nginx
-				;;
-				4)
-				nginx_back
-				;;
-				5)
+				0)
 				start_menu_main
 				;;
-				6)
+				1)
+				add_nginx
+				;;
+				2)
+				delete_nginx
+				;;
+				3)
+				nginx_back
+				;;
+				4)
 				exit 1
 				;;
 				*)
 				clear
-				echo -e "${Error}:请输入正确数字 [1-6]"
+				echo -e "${Error}请输入正确数字 [0-4]"
 				sleep 2s
 				set_nginx_menu
 				;;
 			esac
+			set_nginx_menu
 		}
-		test ! -e /root/test/ng || set_nginx_menu
-		set_nginx_first
-	}
-	nginx_uninstall(){
-		if [[ "${release}" == "centos" ]]; then
-			yum --purge remove nginx
-		else
-			apt-get --purge remove nginx
-		fi
-		rm -f testng
+		set_nginx_menu
 	}
 	#Nginx管理
 	manage_nginx(){
 		clear
-		echo && echo -e " Nginx一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-		
-————————————Nginx管理————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装Nginx
- ${Green_font_prefix}2.${Font_color_suffix} 配置Nginx
- ${Green_font_prefix}3.${Font_color_suffix} 卸载Nginx
- ${Green_font_prefix}4.${Font_color_suffix} 启动Nginx
- ${Green_font_prefix}5.${Font_color_suffix} 关闭Nginx
- ${Green_font_prefix}6.${Font_color_suffix} 重启Nginx
- ${Green_font_prefix}7.${Font_color_suffix} 查看Nginx状态
- ${Green_font_prefix}8.${Font_color_suffix} 回到主页
- ${Green_font_prefix}9.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-9](默认:9):" num
-		[ -z "${num}" ] && num=9
+		white_font "\n Nginx一键管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '—————————Nginx管理——————————'
+		green_font ' 1.' '  配置Nginx'
+		yello_font '————————————————————————————'
+		green_font ' 2.' '  安装Nginx'
+		green_font ' 3.' '  卸载Nginx'
+		yello_font '————————————————————————————'
+		green_font ' 4.' '  重启Nginx'
+		green_font ' 5.' '  关闭Nginx'
+		green_font ' 6.' '  启动Nginx'
+		green_font ' 7.' '  查看Nginx状态'
+		yello_font '————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "————————————————————————————\n"
+		read -p "请输入数字[0-8](默认:1)：" num
+		[ -z "${num}" ] && num=1
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
-			nginx_install
+			set_nginx
 			;;
 			2)
-			set_nginx
+			nginx_install
 			;;
 			3)
 			nginx_uninstall
 			;;
 			4)
-			systemctl start nginx.service
+			systemctl restart nginx.service
 			;;
 			5)
 			systemctl stop nginx.service
 			;;
 			6)
-			systemctl restart nginx.service
+			systemctl start nginx.service
 			;;
 			7)
 			systemctl status nginx.service
 			;;
 			8)
-			start_menu_main
-			;;
-			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-9]"
+			echo -e "${Error}请输入正确数字 [0-8]"
 			sleep 2s
 			manage_nginx
 			;;
 		esac
+		manage_nginx
 	}
 	manage_nginx
- }
+}
 
 #设置SSH端口
 set_ssh(){
 	clear
-	ssh_port=$(cat /etc/ssh/sshd_config|grep 'Port '|head -1|awk -F ' ' '{print $2}')
+	ssh_port=$(cat /etc/ssh/sshd_config |grep 'Port ' |awk -F ' ' '{print $2}')
 	while :; do echo
-		stty erase ^H && read -p "Please input SSH port(Default: $ssh_port): " SSH_PORT
+		read -p "请输入要修改为的SSH端口(默认:$ssh_port)：" SSH_PORT
 		[ -z "$SSH_PORT" ] && SSH_PORT=$ssh_port
 		if [ $SSH_PORT -eq 22 >/dev/null 2>&1 -o $SSH_PORT -gt 1024 >/dev/null 2>&1 -a $SSH_PORT -lt 65535 >/dev/null 2>&1 ];then
 			break
@@ -4249,8 +4451,8 @@ set_ssh(){
 	done
 	if [[ ${SSH_PORT} != "${ssh_port}" ]]; then
 		#开放安全权限
-		if [[ -x "$(command -v sestatus)" && $(getenforce) != "Disabled" ]]; then
-			if [[ ! -x "$(command -v semanage)" && ${release} == "centos" ]]; then
+		if type sestatus >/dev/null 2>&1 && [ $(getenforce) != "Disabled" ]; then
+			if type semanage >/dev/null 2>&1 && [ ${release} == "centos" ]; then
 				pack_semanage=$(yum provides semanage|grep ' : '|head -1|awk -F ' :' '{print $1}')
 				yum -y install ${pack_semanage}
 			fi
@@ -4271,12 +4473,12 @@ set_ssh(){
 			service ssh restart
 		fi
 		#关闭安全权限
-		if [[ -x "$(command -v semanage)" && ${ssh_port} != "22" ]]; then
+		if type semanage >/dev/null 2>&1 && [ ${ssh_port} != '22' ]; then
 			semanage port -d -t ssh_port_t -p tcp ${ssh_port}
 		fi
 		echo -e "${Info}SSH防火墙已重启！"
 	fi
-	echo -e "${Info}已将SSH端口修改为：${Red_font_prefix}${SSH_PORT}${Font_color_suffix}"
+	echo -e "${Info}已将SSH端口修改为：$(red_font $SSH_PORT)"
 	echo -e "\n${Info}按任意键返回主页..."
 	char=`get_char`
 	start_menu_main
@@ -4285,28 +4487,33 @@ set_ssh(){
 #设置Root密码
 set_root(){
 	clear
-	echo && echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 使用高强度随机密码
- ${Green_font_prefix}2.${Font_color_suffix} 输入自定义密码
- ${Green_font_prefix}3.${Font_color_suffix} 返回主页
- —————————————————————" && echo
-	stty erase ^H && read -p "请输入数字[1-3](默认:3)：" num
-	[ -z "${num}" ] && num=3
+	white_font "\n     ————胖波比————\n"
+	yello_font '——————————————————————————'
+	green_font ' 1.' '  使用高强度随机密码'
+	green_font ' 2.' '  输入自定义密码'
+	yello_font '——————————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 3.' '  退出脚本'
+	yello_font "——————————————————————————\n"
+	read -p "请输入数字[0-3](默认:1)：" num
+	[ -z "${num}" ] && num=1
 	case "$num" in
+		0)
+		start_menu_main
+		;;
 		1)
 		pw=$(tr -dc 'A-Za-z0-9!@#$%^&*()[]{}+=_,' </dev/urandom | head -c 17)
 		;;
 		2)
-		stty erase ^H && read -p "请设置密码(默认:pangbobi):" pw
+		read -p "请设置密码(默认:pangbobi)：" pw
 		[ -z "${pw}" ] && pw="pangbobi"
 		;;
 		3)
-		start_menu_main
+		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [1-3]"
+		echo -e "${Error}请输入正确数字 [0-3]"
 		sleep 2s
 		set_root
 		;;
@@ -4316,13 +4523,13 @@ set_root(){
 	sed -i '1,/PermitRootLogin/{s/.*PermitRootLogin.*/PermitRootLogin yes/}' /etc/ssh/sshd_config
 	sed -i '1,/PasswordAuthentication/{s/.*PasswordAuthentication.*/PasswordAuthentication yes/}' /etc/ssh/sshd_config
 	# 重启ssh服务
-	if [[ "${release}" == "centos" ]]; then
+	if [[ ${release} == "centos" ]]; then
 		service sshd restart
 	else
 		service ssh restart
 	fi
-	echo -e "\n${Info}您的密码是：${Red_font_prefix}${pw}${Font_color_suffix}"
-	echo -e "${Info}请务必记录您的密码！然后任意键返回主页"
+	echo -e "\n${Info}您的密码是：$(red_font $pw)"
+	echo -e "${Tip}请务必记录您的密码！然后任意键返回主页"
 	char=`get_char`
 	start_menu_main
 }
@@ -4331,20 +4538,24 @@ set_root(){
 test_sys(){
 	#千影大佬的脚本
 	qybench(){
-		wget https://raw.githubusercontent.com/chiakge/Linux-Server-Bench-Test/master/linuxtest.sh && chmod +x linuxtest.sh
+		wget --no-check-certificate -qO- https://raw.githubusercontent.com/chiakge/Linux-Server-Bench-Test/master/linuxtest.sh && chmod +x linuxtest.sh
 		clear
-		echo && echo -e " 系统性能一键测试综合脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-			
-————————————性能测试————————————
- ${Green_font_prefix}1.${Font_color_suffix} 运行（不含UnixBench）
- ${Green_font_prefix}2.${Font_color_suffix} 运行（含UnixBench）
- ${Green_font_prefix}3.${Font_color_suffix} 回到主页
- ${Green_font_prefix}4.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-		stty erase ^H && read -p "请输入数字 [1-4](默认:4):" num
+		white_font "\n 系统性能一键测试综合脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '————————————性能测试————————————'
+		green_font ' 1.' '  运行(不含UnixBench)'
+		green_font ' 2.' '  运行(含UnixBench)'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 3.' '  返回上页'
+		green_font ' 4.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		read -p "请输入数字[0-4](默认:4)：" num
 		[ -z "${num}" ] && num=4
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			bash linuxtest.sh
 			;;
@@ -4352,14 +4563,14 @@ test_sys(){
 			bash linuxtest.sh a
 			;;
 			3)
-			start_menu_main
+			start_menu_bench
 			;;
 			4)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-4]"
+			echo -e "${Error}请输入正确数字 [0-4]"
 			sleep 2s
 			qybench
 			;;
@@ -4515,9 +4726,13 @@ test_sys(){
 
 		about() {
 			echo ""
-			echo " Copyright (C) 2019 胖波比 hsxmuyang68@gmail.com"
-			echo -e " ${RED}Happy New Year!${PLAIN}"
-			echo ""
+			echo " ========================================================= "
+			echo " \                 Superbench.sh  Script                 / "
+			echo " \       Basic system info, I/O test and speedtest       / "
+			echo " \                   v1.1.5 (14 Jun 2019)                / "
+			echo " \                   Created by Pangbobi                 / "
+			echo " ========================================================= "
+			echo -e "\n ${RED}Happy New Year!${PLAIN}\n"
 		}
 
 		cancel() {
@@ -4536,7 +4751,7 @@ test_sys(){
 			# check python
 			if  [ ! -e '/usr/bin/python' ]; then
 					#echo -e
-					#stty erase ^H && read -p "${RED}Error:${PLAIN} python is not install. You must be install python command at first.\nDo you want to install? [y/n]" is_install
+					#read -p "${RED}Error:${PLAIN} python is not install. You must be install python command at first.\nDo you want to install? [y/n]" is_install
 					#if [[ ${is_install} == "y" || ${is_install} == "Y" ]]; then
 					echo " Installing Python ..."
 						if [ "${release}" == "centos" ]; then
@@ -4555,7 +4770,7 @@ test_sys(){
 			# check curl
 			if  [ ! -e '/usr/bin/curl' ]; then
 				#echo -e
-				#stty erase ^H && read -p "${RED}Error:${PLAIN} curl is not install. You must be install curl command at first.\nDo you want to install? [y/n]" is_install
+				#read -p "${RED}Error:${PLAIN} curl is not install. You must be install curl command at first.\nDo you want to install? [y/n]" is_install
 				#if [[ ${is_install} == "y" || ${is_install} == "Y" ]]; then
 					echo " Installing Curl ..."
 						if [ "${release}" == "centos" ]; then
@@ -4573,7 +4788,7 @@ test_sys(){
 			# check wget
 			if  [ ! -e '/usr/bin/wget' ]; then
 				#echo -e
-				#stty erase ^H && read -p "${RED}Error:${PLAIN} wget is not install. You must be install wget command at first.\nDo you want to install? [y/n]" is_install
+				#read -p "${RED}Error:${PLAIN} wget is not install. You must be install wget command at first.\nDo you want to install? [y/n]" is_install
 				#if [[ ${is_install} == "y" || ${is_install} == "Y" ]]; then
 					echo " Installing Wget ..."
 						if [ "${release}" == "centos" ]; then
@@ -5227,21 +5442,22 @@ test_sys(){
 	#开始菜单
 	start_menu_bench(){
 		clear
-		echo && echo -e " 系统性能一键测试脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-		
-————————————性能测试————————————
- ${Green_font_prefix}1.${Font_color_suffix} 执行全局测试
- ${Green_font_prefix}2.${Font_color_suffix} 执行国际测试
- ${Green_font_prefix}3.${Font_color_suffix} 执行国内三网测试
- ${Green_font_prefix}4.${Font_color_suffix} 回到主页
- ${Green_font_prefix}5.${Font_color_suffix} 退出脚本
-————————————————————————————————" && echo
-
-		echo
-		stty erase ^H && read -p "请输入数字 [1-5](默认:5):" num
-		[ -z "${num}" ] && num=5
+		white_font "\n 系统性能一键测试脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "	-- 胖波比 --\n"
+		yello_font '————————————性能测试————————————'
+		green_font ' 1.' '  执行全局测试'
+		green_font ' 2.' '  执行国际测试'
+		green_font ' 3.' '  执行国内三网测试'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 4.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		read -p "请输入数字[0-4](默认:2)：" num
+		[ -z "${num}" ] && num=2
 		case "$num" in
+			0)
+			start_menu_main
+			;;
 			1)
 			qybench
 			;;
@@ -5252,20 +5468,16 @@ test_sys(){
 			cbench
 			;;
 			4)
-			start_menu_main
-			;;
-			5)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}:请输入正确数字 [1-5]"
+			echo -e "${Error}请输入正确数字 [0-4]"
 			sleep 2s
 			start_menu_bench
 			;;
 		esac
 	}
-	
 	start_menu_bench
 }
 
@@ -5274,9 +5486,9 @@ reinstall_sys(){
 	github="raw.githubusercontent.com/chiakge/installNET/master"
 	#安装环境
 	first_job(){
-	if [[ "${release}" == "centos" ]]; then
+	if [[ ${release} == "centos" ]]; then
 		yum install -y xz openssl gawk file
-	elif [[ "${release}" == "debian" || "${release}" == "ubuntu" ]]; then
+	elif [[ ${release} == "debian" || ${release} == "ubuntu" ]]; then
 		apt-get update
 		apt-get install -y xz-utils openssl gawk file	
 	fi
@@ -5285,50 +5497,50 @@ reinstall_sys(){
 	# 安装系统
 	InstallOS(){
 	clear
-	echo -e "${Info}重装系统需要时间,请耐心等待..."
-	echo -e "${Info}重装完成后,请用root身份从22端口连接服务器！\n"
-	echo -e "    ————胖波比————
- —————————————————————
- ${Green_font_prefix}1.${Font_color_suffix} 使用高强度随机密码
- ${Green_font_prefix}2.${Font_color_suffix} 输入自定义密码
- ${Green_font_prefix}3.${Font_color_suffix} 返回主页
- —————————————————————" && echo
-	stty erase ^H && read -p "请输入数字[1-3](默认:3)：" num
-	[ -z "${num}" ] && num=3
+	echo -e "\n${Info}重装系统需要时间,请耐心等待..."
+	echo -e "${Tip}重装完成后,请用root身份从22端口连接服务器！\n"
+	white_font '     ————胖波比————'
+	yello_font '—————————————————————————'
+	green_font ' 0.' '  返回主页'
+	green_font ' 1.' '  使用高强度随机密码'
+	green_font ' 2.' '  输入自定义密码'
+	yello_font "—————————————————————————\n"
+	read -p "请输入数字[0-2](默认:1)：" num
+	[ -z "${num}" ] && num=1
 	case "$num" in
+		0)
+		start_menu_main
+		;;
 		1)
 		pw=$(tr -dc 'A-Za-z0-9!@#$%^&*()[]{}+=_,' </dev/urandom | head -c 17)
 		;;
 		2)
-		stty erase ^H && read -p "请设置密码(默认:pangbobi):" pw
+		read -p "请设置密码(默认:pangbobi)：" pw
 		[ -z "${pw}" ] && pw="pangbobi"
-		;;
-		3)
-		start_menu_main
 		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [1-3]"
+		echo -e "${Error}请输入正确数字 [0-2]"
 		sleep 2s
 		reinstall_sys
 		;;
 	esac
-	echo -e "\n${Info}您的密码是：${Red_font_prefix}${pw}${Font_color_suffix}"
-	echo -e "${Info}请务必记录您的密码！然后任意键继续..."
+	echo -e "\n${Info}您的密码是：$(red_font $pw)"
+	echo -e "${Tip}请务必记录您的密码！然后任意键继续..."
 	char=`get_char`
-	if [[ "${model}" == "自动" ]]; then
+	if [[ ${model} == "自动" ]]; then
 		model="a"
 	else 
 		model="m"
 	fi
-	if [[ "${country}" == "国外" ]]; then
+	if [[ ${country} == "国外" ]]; then
 		country=""
 	else 
-		if [[ "${os}" == "c" ]]; then
+		if [[ ${os} == "c" ]]; then
 			country="--mirror https://mirrors.tuna.tsinghua.edu.cn/centos/"
-		elif [[ "${os}" == "u" ]]; then
+		elif [[ ${os} == "u" ]]; then
 			country="--mirror https://mirrors.tuna.tsinghua.edu.cn/ubuntu/"
-		elif [[ "${os}" == "d" ]]; then
+		elif [[ ${os} == "d" ]]; then
 			country="--mirror https://mirrors.tuna.tsinghua.edu.cn/debian/"
 		fi
 	fi
@@ -5337,13 +5549,13 @@ reinstall_sys(){
 	}
 	# 安装系统
 	installadvanced(){
-	stty erase ^H && read -p "请设置参数:" advanced
+	read -p "请设置参数：" advanced
 	wget --no-check-certificate https://${github}/InstallNET.sh && chmod -x InstallNET.sh
 	bash InstallNET.sh $advanced
 	}
 	# 切换位数
 	switchbit(){
-	if [[ "${vbit}" == "64" ]]; then
+	if [[ ${vbit} == "64" ]]; then
 		vbit="32"
 	else
 		vbit="64"
@@ -5351,7 +5563,7 @@ reinstall_sys(){
 	}
 	# 切换模式
 	switchmodel(){
-	if [[ "${model}" == "自动" ]]; then
+	if [[ ${model} == "自动" ]]; then
 		model="手动"
 	else
 		model="自动"
@@ -5359,7 +5571,7 @@ reinstall_sys(){
 	}
 	# 切换国家
 	switchcountry(){
-	if [[ "${country}" == "国外" ]]; then
+	if [[ ${country} == "国外" ]]; then
 		country="国内"
 	else
 		country="国外"
@@ -5370,26 +5582,26 @@ reinstall_sys(){
 	installCentos(){
 	clear
 	os="c"
-	echo && echo -e " 一键网络重装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-  -- 就是爱生活 | 94ish.me --
-	  
-————————————选择版本————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装 CentOS6.8系统
- ${Green_font_prefix}2.${Font_color_suffix} 安装 CentOS6.9系统
-————————————切换模式————————————
- ${Green_font_prefix}3.${Font_color_suffix} 切换安装位数
- ${Green_font_prefix}4.${Font_color_suffix} 切换安装模式
- ${Green_font_prefix}5.${Font_color_suffix} 切换镜像源
-————————————————————————————————
- ${Green_font_prefix}0.${Font_color_suffix} 返回主菜单" && echo
-
-	echo -e " 当前模式: 安装${Red_font_prefix}${vbit}${Font_color_suffix}位系统，${Red_font_prefix}${model}${Font_color_suffix}模式,${Red_font_prefix}${country}${Font_color_suffix}镜像源。"
-	echo
-	stty erase ^H && read -p "请输入数字 [0-11](默认:0):" num
-	[ -z "${num}" ] && num=0
+	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+	white_font "		  -- 胖波比 --\n"
+	yello_font '————————————选择版本————————————'
+	green_font ' 1.' '  安装 CentOS6.8系统'
+	green_font ' 2.' '  安装 CentOS6.9系统'
+	yello_font '————————————切换模式————————————'
+	green_font ' 3.' '  切换安装位数'
+	green_font ' 4.' '  切换安装模式'
+	green_font ' 5.' '  切换镜像源'
+	yello_font '————————————————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 6.' '  返回上页'
+	green_font ' 7.' '  退出脚本'
+	yello_font "————————————————————————————————\n"
+	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+	read -p "请输入数字[0-7](默认:6)：" num
+	[ -z "${num}" ] && num=6
 	case "$num" in
 		0)
-		start_menu_resys
+		start_menu_main
 		;;
 		1)
 		InstallOS "6.8"
@@ -5409,9 +5621,15 @@ reinstall_sys(){
 		switchcountry
 		installCentos
 		;;
+		6)
+		start_menu_resys
+		;;
+		7)
+		exit 1
+		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [0-11]"
+		echo -e "${Error}请输入正确数字 [0-7]"
 		sleep 2s
 		installCentos
 		;;
@@ -5422,27 +5640,27 @@ reinstall_sys(){
 	installDebian(){
 	clear
 	os="d"
-	echo && echo -e " 一键网络重装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 就是爱生活 | 94ish.me --
-	  
-————————————选择版本————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装 Debian7系统
- ${Green_font_prefix}2.${Font_color_suffix} 安装 Debian8系统
- ${Green_font_prefix}3.${Font_color_suffix} 安装 Debian9系统
-————————————切换模式————————————
- ${Green_font_prefix}4.${Font_color_suffix} 切换安装位数
- ${Green_font_prefix}5.${Font_color_suffix} 切换安装模式
- ${Green_font_prefix}6.${Font_color_suffix} 切换镜像源
-————————————————————————————————
- ${Green_font_prefix}0.${Font_color_suffix} 返回主菜单" && echo
-
-	echo -e " 当前模式: 安装${Red_font_prefix}${vbit}${Font_color_suffix}位系统，${Red_font_prefix}${model}${Font_color_suffix}模式,${Red_font_prefix}${country}${Font_color_suffix}镜像源。"
-	echo
-	stty erase ^H && read -p "请输入数字 [0-11](默认:3):" num
+	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+	white_font "		  -- 胖波比 --\n"
+	yello_font '————————————选择版本————————————'
+	green_font ' 1.' '  安装 Debian7系统'
+	green_font ' 2.' '  安装 Debian8系统'
+	green_font ' 3.' '  安装 Debian9系统'
+	yello_font '————————————切换模式————————————'
+	green_font ' 4.' '  切换安装位数'
+	green_font ' 5.' '  切换安装模式'
+	green_font ' 6.' '  切换镜像源'
+	yello_font '————————————————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 7.' '  返回上页'
+	green_font ' 8.' '  退出脚本'
+	yello_font "————————————————————————————————\n"
+	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+	read -p "请输入数字[0-8](默认:3)：" num
 	[ -z "${num}" ] && num=3
 	case "$num" in
 		0)
-		start_menu_resys
+		start_menu_main
 		;;
 		1)
 		InstallOS "7"
@@ -5465,9 +5683,15 @@ reinstall_sys(){
 		switchcountry
 		installDebian
 		;;
+		7)
+		start_menu_resys
+		;;
+		8)
+		exit 1
+		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [0-11]"
+		echo -e "${Error}请输入正确数字 [0-8]"
 		sleep 2s
 		installCentos
 		;;
@@ -5478,27 +5702,27 @@ reinstall_sys(){
 	installUbuntu(){
 	clear
 	os="u"
-	echo && echo -e " 一键网络重装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 就是爱生活 | 94ish.me --
-	  
-————————————选择版本————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装 Ubuntu14系统
- ${Green_font_prefix}2.${Font_color_suffix} 安装 Ubuntu16系统
- ${Green_font_prefix}3.${Font_color_suffix} 安装 Ubuntu18系统
-————————————切换模式————————————
- ${Green_font_prefix}4.${Font_color_suffix} 切换安装位数
- ${Green_font_prefix}5.${Font_color_suffix} 切换安装模式
- ${Green_font_prefix}6.${Font_color_suffix} 切换镜像源
-————————————————————————————————
- ${Green_font_prefix}0.${Font_color_suffix} 返回主菜单" && echo
-
-	echo -e " 当前模式: 安装${Red_font_prefix}${vbit}${Font_color_suffix}位系统，${Red_font_prefix}${model}${Font_color_suffix}模式,${Red_font_prefix}${country}${Font_color_suffix}镜像源。"
-	echo
-	stty erase ^H && read -p "请输入数字 [0-11](默认:3):" num
+	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+	white_font "		  -- 胖波比 --\n"
+	yello_font '————————————选择版本————————————'
+	green_font ' 1.' '  安装 Ubuntu14系统'
+	green_font ' 2.' '  安装 Ubuntu16系统'
+	green_font ' 3.' '  安装 Ubuntu18系统'
+	yello_font '————————————切换模式————————————'
+	green_font ' 4.' '  切换安装位数'
+	green_font ' 5.' '  切换安装模式'
+	green_font ' 6.' '  切换镜像源'
+	yello_font '————————————————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 7.' '  返回上页'
+	green_font ' 8.' '  退出脚本'
+	yello_font "————————————————————————————————\n"
+	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+	read -p "请输入数字[0-8](默认:3)：" num
 	[ -z "${num}" ] && num=3
 	case "$num" in
 		0)
-		start_menu_resys
+		start_menu_main
 		;;
 		1)
 		InstallOS "trusty"
@@ -5521,9 +5745,15 @@ reinstall_sys(){
 		switchcountry
 		installUbuntu
 		;;
+		7)
+		start_menu_resys
+		;;
+		8)
+		exit 1
+		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [0-11]"
+		echo -e "${Error}请输入正确数字 [0-8]"
 		sleep 2s
 		installCentos
 		;;
@@ -5532,25 +5762,28 @@ reinstall_sys(){
 	#开始菜单
 	start_menu_resys(){
 	clear
-	echo && echo -e " 一键网络重装管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 就是爱生活 | 94ish.me --
-	  
-————————————重装系统————————————
- ${Green_font_prefix}1.${Font_color_suffix} 安装 CentOS系统
- ${Green_font_prefix}2.${Font_color_suffix} 安装 Debian系统
- ${Green_font_prefix}3.${Font_color_suffix} 安装 Ubuntu系统
- ${Green_font_prefix}4.${Font_color_suffix} 高级模式（自定义参数）
-————————————切换模式————————————
- ${Green_font_prefix}5.${Font_color_suffix} 切换安装位数
- ${Green_font_prefix}6.${Font_color_suffix} 切换安装模式
- ${Green_font_prefix}7.${Font_color_suffix} 切换镜像源
-————————————————————————————————" && echo
-
-	echo -e " 当前模式: 安装${Red_font_prefix}${vbit}${Font_color_suffix}位系统，${Red_font_prefix}${model}${Font_color_suffix}模式,${Red_font_prefix}${country}${Font_color_suffix}镜像源。"
-	echo
-	stty erase ^H && read -p "请输入数字 [0-7](默认:2):" num
+	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+	white_font "		  -- 胖波比 --\n"
+	yello_font '————————————重装系统————————————'
+	green_font ' 1.' '  安装 CentOS系统'
+	green_font ' 2.' '  安装 Debian系统'
+	green_font ' 3.' '  安装 Ubuntu系统'
+	green_font ' 4.' '  高级模式(自定义参数)'
+	yello_font '————————————切换模式————————————'
+	green_font ' 5.' '  切换安装位数'
+	green_font ' 6.' '  切换安装模式'
+	green_font ' 7.' '  切换镜像源'
+	yello_font '————————————————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 8.' '  退出脚本'
+	yello_font "————————————————————————————————\n"
+	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+	read -p "请输入数字[0-8](默认:2)：" num
 	[ -z "${num}" ] && num=2
 	case "$num" in
+		0)
+		start_menu_main
+		;;
 		1)
 		installCentos
 		;;
@@ -5575,15 +5808,17 @@ reinstall_sys(){
 		switchcountry
 		start_menu_resys
 		;;
+		8)
+		exit 1
+		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [0-7]"
+		echo -e "${Error}请输入正确数字 [0-8]"
 		sleep 2s
 		start_menu_resys
 		;;
 	esac
 	}
-	
 	first_job
 	model="自动"
 	vbit="64"
@@ -5597,7 +5832,7 @@ set_firewall(){
 		clear
 		until [[ "${port}" -ge "1" && "${port}" -le "65535" ]]
 		do
-			stty erase ^H && read -p "请输入端口号[1-65535]：" port
+			read -p "请输入端口号[1-65535]：" port
 		done
 		add_firewall
 		firewall_restart
@@ -5606,14 +5841,14 @@ set_firewall(){
 		clear
 		until [[ "${port}" -ge "1" && "${port}" -le "65535" ]]
 		do
-			stty erase ^H && read -p "请输入端口号[1-65535]：" port
+			read -p "请输入端口号[1-65535]：" port
 		done
 		delete_firewall
 		firewall_restart
 	}
 	delete_firewall_all(){
 		echo -e "${Info}开始设置防火墙..."
-		if [[ "${release}" == "centos" &&  "${version}" -ge "7" ]]; then
+		if [[ ${release} == "centos" && ${version} -ge "7" ]]; then
 			firewall-cmd --permanent --zone=public --remove-port=1-65535/tcp > /dev/null 2>&1
 			firewall-cmd --permanent --zone=public --remove-port=1-65535/udp > /dev/null 2>&1
 		else
@@ -5626,20 +5861,23 @@ set_firewall(){
 	}
 	clear
 	unset port
-	echo && echo -e " Firewall一键管理脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	-- 胖波比 --
-		
-————————Firewall管理————————
- ${Green_font_prefix}1.${Font_color_suffix} 添加防火墙端口
- ${Green_font_prefix}2.${Font_color_suffix} 删除防火墙端口
- ${Green_font_prefix}3.${Font_color_suffix} 添加所有防火墙
- ${Green_font_prefix}4.${Font_color_suffix} 删除所有防火墙
- ${Green_font_prefix}5.${Font_color_suffix} 回到主页
- ${Green_font_prefix}6.${Font_color_suffix} 退出脚本
-————————————————————————————" && echo
-	stty erase ^H && read -p "请输入数字 [1-6](默认:6):" num
-	[ -z "${num}" ] && num=6
+	white_font "\n Firewall一键管理脚本 \c" && red_font "[v${sh_ver}]"
+	white_font "	-- 胖波比 --\n"
+	yello_font '————————Firewall管理————————'
+	green_font ' 1.' '  添加防火墙端口'
+	green_font ' 2.' '  删除防火墙端口'
+	green_font ' 3.' '  添加所有防火墙'
+	green_font ' 4.' '  删除所有防火墙'
+	yello_font '————————————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 5.' '  退出脚本'
+	yello_font "————————————————————————————\n"
+	read -p "请输入数字[0-5](默认:0)：" num
+	[ -z "${num}" ] && num=0
 	case "$num" in
+		0)
+		start_menu_main
+		;;
 		1)
 		add_firewall_single
 		;;
@@ -5653,14 +5891,11 @@ set_firewall(){
 		delete_firewall_all
 		;;
 		5)
-		start_menu_main
-		;;
-		6)
 		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [1-6]"
+		echo -e "${Error}请输入正确数字 [0-5]"
 		sleep 2s
 		set_firewall
 		;;
@@ -5668,43 +5903,65 @@ set_firewall(){
 	set_firewall
 }
 
+#管理脚本自启
+manage_shell(){
+	clear
+	white_font "\n     ————胖波比————\n"
+	yello_font '——————————————————————————'
+	green_font ' 1.' '  开启脚本自启'
+	green_font ' 2.' '  关闭脚本自启'
+	yello_font "——————————————————————————\n"
+	read -p "请输入数字[1-2](默认:1)：" num
+	[ -z "${num}" ] && num=1
+	if [[ $num == '1' ]]; then
+		if [[ `grep -c "./sv.sh" .bash_profile` -eq '0' ]]; then
+			echo "./sv.sh" >> /root/.bash_profile
+		fi
+	elif [[ $num == '2' ]]; then
+		sed -i "/sv.sh/d" .bash_profile
+	else
+		manage_shell
+	fi
+}
+
 #开始菜单
 start_menu_main(){
 	clear
-	echo -e "
-   超级VPN一键设置脚本 ${Red_font_prefix}[v${sh_ver}]${Font_color_suffix}
-	  -- 胖波比 --
-	执行脚本：./sv.sh
-   终止正在进行的操作：Ctrl+C
-	  
-—————————————VPN搭建——————————————
- ${Green_font_prefix}1.${Font_color_suffix} V2Ray安装管理
- ${Green_font_prefix}2.${Font_color_suffix} SSR安装管理
- ${Green_font_prefix}3.${Font_color_suffix} Trojan安装管理
- ${Green_font_prefix}4.${Font_color_suffix} BBR/Lotserver安装管理
-—————————————控制面板—————————————
- ${Green_font_prefix}5.${Font_color_suffix} 安装宝塔面板
- ${Green_font_prefix}6.${Font_color_suffix} ZFAKA安装管理
- ${Green_font_prefix}7.${Font_color_suffix} SS-Panel安装管理
- ${Green_font_prefix}8.${Font_color_suffix} Kodexplorer安装管理
- ${Green_font_prefix}9.${Font_color_suffix} WordPress安装管理
- ${Green_font_prefix}10.${Font_color_suffix} Docker安装管理
-———————————设置伪装(二选一)———————
- ${Green_font_prefix}11.${Font_color_suffix} Caddy安装管理
- ${Green_font_prefix}12.${Font_color_suffix} Nginx安装管理
-—————————————系统设置—————————————
- ${Green_font_prefix}13.${Font_color_suffix} 设置SSH端口
- ${Green_font_prefix}14.${Font_color_suffix} 设置root密码
- ${Green_font_prefix}15.${Font_color_suffix} 系统性能测试
- ${Green_font_prefix}16.${Font_color_suffix} 重装VPS系统
- ${Green_font_prefix}17.${Font_color_suffix} 设置防火墙
-—————————————脚本设置—————————————
- ${Green_font_prefix}18.${Font_color_suffix} 设置脚本自启
- ${Green_font_prefix}19.${Font_color_suffix} 关闭脚本自启
- ${Green_font_prefix}20.${Font_color_suffix} 退出脚本
-——————————————————————————————————" && echo
-	stty erase ^H && read -p "请输入数字 [1-20](默认:20):" num
-	[ -z "${num}" ] && num=20
+	white_font "\n   超级VPN一键设置脚本 \c" && red_font "[v${sh_ver}]"
+	white_font '	  -- 胖波比 --'
+	white_font '	执行脚本：./sv.sh'
+	white_font "   终止正在进行的操作：Ctrl+C\n"
+	yello_font '—————————————VPN搭建——————————————'
+	green_font ' 1.' '  V2Ray安装管理'
+	green_font ' 2.' '  SSR安装管理'
+	green_font ' 3.' '  Trojan安装管理'
+	yello_font '—————————————节点相关—————————————'
+	green_font ' 4.' '  BBR/Lotserver安装管理'
+	green_font ' 5.' '  生成订阅链接'
+	green_font ' 6.' '  生成链接二维码'
+	yello_font '—————————————控制面板—————————————'
+	green_font ' 7.' '  宝塔面板安装管理'
+	green_font ' 8.' '  临时邮箱安装管理'
+	green_font ' 9.' '  ZFAKA安装管理'
+	green_font ' 10.' ' SS-Panel安装管理'
+	green_font ' 11.' ' Kodexplorer安装管理'
+	green_font ' 12.' ' WordPress安装管理'
+	green_font ' 13.' ' Docker安装管理'
+	yello_font '———————————设置伪装(二选一)———————'
+	green_font ' 14.' ' Caddy安装管理'
+	green_font ' 15.' ' Nginx安装管理'
+	yello_font '—————————————系统设置—————————————'
+	green_font ' 16.' ' 设置SSH端口'
+	green_font ' 17.' ' 设置root密码'
+	green_font ' 18.' ' 系统性能测试'
+	green_font ' 19.' ' 重装VPS系统'
+	green_font ' 20.' ' 设置防火墙'
+	yello_font '—————————————脚本设置—————————————'
+	green_font ' 21.' ' 脚本自启管理'
+	green_font ' 22.' ' 退出脚本'
+	yello_font "——————————————————————————————————\n"
+	read -p "请输入数字[1-22](默认:22)：" num
+	[ -z "${num}" ] && num=22
 	case "$num" in
 		1)
 		manage_v2ray
@@ -5719,58 +5976,62 @@ start_menu_main(){
 		install_bbr
 		;;
 		5)
-		install_btpanel
+		manage_dingyue
 		;;
 		6)
-		manage_zfaka
+		manage_qrcode
 		;;
 		7)
-		manage_sspanel
+		manage_btpanel
 		;;
 		8)
-		manage_kodexplorer
+		manage_forsakenmail
 		;;
 		9)
-		manage_wordpress
+		manage_zfaka
 		;;
 		10)
-		manage_docker
+		manage_sspanel
 		;;
 		11)
-		install_caddy
+		manage_kodexplorer
 		;;
 		12)
-		install_nginx
+		manage_wordpress
 		;;
 		13)
-		set_ssh
+		manage_docker
 		;;
 		14)
-		set_root
+		install_caddy
 		;;
 		15)
-		test_sys
+		install_nginx
 		;;
 		16)
-		reinstall_sys
+		set_ssh
 		;;
 		17)
-		set_firewall
+		set_root
 		;;
 		18)
-		if [[ `grep -c "./sv.sh" .bash_profile` -eq '0' ]]; then
-			echo "./sv.sh" >> /root/.bash_profile
-		fi
+		test_sys
 		;;
 		19)
-		sed -i "/sv.sh/d" .bash_profile
+		reinstall_sys
 		;;
 		20)
+		set_firewall
+		;;
+		21)
+		manage_shell
+		;;
+		22)
 		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}:请输入正确数字 [1-20]"
+		echo -e "${Error}请输入正确数字 [1-22]"
 		sleep 2s
 		start_menu_main
 		;;
@@ -5780,9 +6041,9 @@ start_menu_main(){
 
 check_sys
 test ! -e /root/test/de || start_menu_main
-[[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error} 本脚本不支持当前系统 ${release} !" && exit 1
-if [[ "${release}" == "centos" ]]; then
-	if [[ "${version}" -ge "7" ]]; then
+[[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error}本脚本不支持当前系统 ${release}！" && exit 1
+if [[ ${release} == "centos" ]]; then
+	if [[ ${version} -ge "7" ]]; then
 		systemctl start firewalld
 		systemctl enable firewalld
 	else
@@ -5797,11 +6058,11 @@ else
 	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules\n/sbin/ip6tables-restore < /etc/ip6tables.up.rules' > /etc/network/if-pre-up.d/iptables
 	chmod +x /etc/network/if-pre-up.d/iptables
 fi
-echo "export LANG=\"en_US.UTF-8\"" >> /root/.bash_profile
+echo 'export LANG="en_US.UTF-8"' >> /root/.bash_profile
 add_firewall_base
 #是阿里云则卸载云盾
 org=$(curl -s https://ipapi.co/org/)
-if [[ "${org}" =~ "Alibaba" ]]; then
+if [[ ${org} =~ "Alibaba" ]]; then
 	wget http://update.aegis.aliyun.com/download/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh
 	wget http://update.aegis.aliyun.com/download/quartz_uninstall.sh && chmod +x quartz_uninstall.sh && ./quartz_uninstall.sh
 	pkill aliyun-service
@@ -5822,12 +6083,17 @@ fi
 firewall_restart
 echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续..."
 char=`get_char`
+${PM} -y install jq qrencode sshpass nodejs openssl git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates vim
 if [[ ${release} == "centos" ]]; then
-	yum -y install jq
-	yum -y install epel-release git bash curl wget zip unzip gcc python36 openssl openssl-devel automake autoconf make libtool ca-certificates python3-pip subversion vim
+	yum -y install epel-release python36 openssl-devel
+	if [[ ${version} == '8' ]]; then
+		yum -y install python-pip
+	else
+		yum -y install python3-pip
+	fi
 else
 	apt-get --fix-broken install
-	apt-get -y install git bash curl wget zip unzip gcc jq python python-setuptools openssl libssl-dev automake autoconf make libtool ca-certificates python3-pip subversion vim
+	apt-get -y install python python-pip python-setuptools libssl-dev
 fi
 mkdir -p /root/test && touch /root/test/de
 country=$(curl -s https://ipapi.co/country/)
