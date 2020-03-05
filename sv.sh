@@ -4,7 +4,7 @@ export PATH
 stty erase ^H
 
 #版本
-sh_ver="7.2.7"
+sh_ver="7.4.2"
 
 #颜色信息
 green_font(){
@@ -22,11 +22,11 @@ yello_font(){
 Info=`green_font [信息]` && Error=`red_font [错误]` && Tip=`yello_font [注意]`
 
 #check root
-[ $(id -u) != "0" ] && { echo -e "${Error}您必须以root用户运行此脚本"; exit 1; }
+[ $(id -u) != '0' ] && { echo -e "${Error}您必须以root用户运行此脚本"; exit 1; }
 
 ######系统检测组件######
-#检查系统
 check_sys(){
+	#检查系统
 	if [[ -f /etc/redhat-release ]]; then
 		release="centos"
 	elif cat /etc/issue | grep -q -E -i "debian"; then
@@ -48,20 +48,21 @@ check_sys(){
 	else
 		version=`grep -oE  "[0-9.]+" /etc/issue | cut -d . -f 1`
 	fi
-	#检查系统安装格式
-	if [ -f "/usr/bin/yum" ] && [ -d "/etc/yum.repos.d" ]; then
-		PM="yum"
-	elif [ -f "/usr/bin/apt-get" ] && [ -f "/usr/bin/dpkg" ]; then
-		PM="apt-get"		
+	#检查系统安装命令
+	if [[ ${release} == "centos" ]]; then
+		PM='yum'
+	else
+		PM='apt'
 	fi
 	bit=`uname -m`
 	myinfo="企鹅号:3450633979"
 }
 #获取IP
 get_ip(){
-	local IP=$( ip addr | egrep -o '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | egrep -v "^192\.168|^172\.1[6-9]\.|^172\.2[0-9]\.|^172\.3[0-2]\.|^10\.|^127\.|^255\.|^0\." | head -n 1 )
-	[ -z ${IP} ] && IP=$( wget -qO- -t1 -T2 ipv4.icanhazip.com )
-	[ -z ${IP} ] && IP=$( wget -qO- -t1 -T2 ipinfo.io/ip )
+	IP=$(curl -s ipinfo.io/ip)
+	[ -z ${IP} ] && IP=$(curl -s http://api.ipify.org)
+	[ -z ${IP} ] && IP=$(curl -s ipv4.icanhazip.com)
+	[ -z ${IP} ] && IP=$(curl -s ipv6.icanhazip.com)
 	[ ! -z ${IP} ] && echo ${IP} || echo
 }
 get_char(){
@@ -75,66 +76,112 @@ get_char(){
 }
 #防火墙配置
 firewall_restart(){
-	if [[ ${release} == "centos" ]]; then
-		if [[ ${version} -ge "7" ]]; then
+	if [[ ${release} == 'centos' ]]; then
+		if [[ ${version} -ge '7' ]]; then
 			firewall-cmd --reload
 		else
 			service iptables save
-			service ip6tables save
+			if [ -e /root/test/ipv6 ]; then
+				service ip6tables save
+			fi
 		fi
 	else
 		iptables-save > /etc/iptables.up.rules
-		ip6tables-save > /etc/ip6tables.up.rules
+		if [ -e /root/test/ipv6 ]; then
+			ip6tables-save > /etc/ip6tables.up.rules
+		fi
 	fi
 	echo -e "${Info}防火墙设置完成！"
 }
 add_firewall(){
-	if [[ ${release} == "centos" &&  ${version} -ge "7" ]]; then
-		firewall-cmd --permanent --zone=public --add-port=${port}/tcp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --add-port=${port}/udp > /dev/null 2>&1
+	if [[ ${release} == 'centos' &&  ${version} -ge '7' ]]; then
+		if [[ -z $(firewall-cmd --zone=public --list-ports |grep -w ${port}/tcp) ]]; then
+			firewall-cmd --zone=public --add-port=${port}/tcp --add-port=${port}/udp --permanent >/dev/null 2>&1
+		fi
 	else
-		iptables -I INPUT -p tcp --dport ${port} -j ACCEPT
-		iptables -I INPUT -p udp --dport ${port} -j ACCEPT
-		ip6tables -I INPUT -p tcp --dport ${port} -j ACCEPT
-		ip6tables -I INPUT -p udp --dport ${port} -j ACCEPT
+		if [[ -z $(iptables -nvL INPUT |grep :|awk -F ':' '{print $2}' |grep -w ${port}) ]]; then
+			iptables -I INPUT -p tcp --dport ${port} -j ACCEPT
+			iptables -I INPUT -p udp --dport ${port} -j ACCEPT
+			iptables -I OUTPUT -p tcp --sport ${port} -j ACCEPT
+			iptables -I OUTPUT -p udp --sport ${port} -j ACCEPT
+			if [ -e /root/test/ipv6 ]; then
+				ip6tables -I INPUT -p tcp --dport ${port} -j ACCEPT
+				ip6tables -I INPUT -p udp --dport ${port} -j ACCEPT
+				ip6tables -I OUTPUT -p tcp --sport ${port} -j ACCEPT
+				ip6tables -I OUTPUT -p udp --sport ${port} -j ACCEPT
+			fi
+		fi
 	fi
 }
 add_firewall_base(){
 	ssh_port=$(cat /etc/ssh/sshd_config |grep 'Port ' |awk -F ' ' '{print $2}')
-	if [[ ${release} == "centos" &&  ${version} -ge "7" ]]; then
-		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/tcp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --add-port=${ssh_port}/udp > /dev/null 2>&1
+	if [[ ${release} == 'centos' &&  ${version} -ge '7' ]]; then
+		if [[ -z $(firewall-cmd --zone=public --list-ports |grep -w ${ssh_port}/tcp) ]]; then
+			firewall-cmd --zone=public --add-port=${ssh_port}/tcp --add-port=${ssh_port}/udp --permanent >/dev/null 2>&1
+		fi
 	else
-		iptables -A INPUT -p icmp --icmp-type any -j ACCEPT
-		iptables -A INPUT -s localhost -d localhost -j ACCEPT
-		iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-		iptables -P INPUT DROP
-		iptables -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
-		iptables -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
+		iptables_base(){
+			$1 -A INPUT -p icmp --icmp-type any -j ACCEPT
+			$1 -A INPUT -s localhost -d localhost -j ACCEPT
+			$1 -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+			$1 -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+			$1 -P INPUT DROP
+			$1 -I INPUT -p tcp --dport ${ssh_port} -j ACCEPT
+			$1 -I INPUT -p udp --dport ${ssh_port} -j ACCEPT
+		}
+		iptables_base iptables
+		if [ -e /root/test/ipv6 ]; then
+			iptables_base ip6tables
+		fi
 	fi
 }
 add_firewall_all(){
-	echo -e "${Info}开始设置防火墙..."
-	if [[ ${release} == "centos" &&  ${version} -ge "7" ]]; then
-		firewall-cmd --permanent --zone=public --add-port=1-65535/tcp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --add-port=1-65535/udp > /dev/null 2>&1
+	if [[ ${release} == 'centos' &&  ${version} -ge '7' ]]; then
+		firewall-cmd --zone=public --add-port=1-65535/tcp --add-port=1-65535/udp --permanent >/dev/null 2>&1
 	else
 		iptables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
 		iptables -I INPUT -p udp --dport 1:65535 -j ACCEPT
-		ip6tables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
-		ip6tables -I INPUT -p udp --dport 1:65535 -j ACCEPT
+		if [ -e /root/test/ipv6 ]; then
+			ip6tables -I INPUT -p tcp --dport 1:65535 -j ACCEPT
+			ip6tables -I INPUT -p udp --dport 1:65535 -j ACCEPT
+		fi
 	fi
 	firewall_restart
 }
 delete_firewall(){
-	if [[ ${release} == "centos" &&  ${version} -ge "7" ]]; then
-		firewall-cmd --permanent --zone=public --remove-port=${port}/tcp > /dev/null 2>&1
-		firewall-cmd --permanent --zone=public --remove-port=${port}/udp > /dev/null 2>&1
+	if [[ ${release} == 'centos' &&  ${version} -ge '7' ]]; then
+		if [[ -n $(firewall-cmd --zone=public --list-ports |grep -w ${port}/tcp) ]]; then
+			firewall-cmd --zone=public --remove-port=${port}/tcp --remove-port=${port}/udp --permanent >/dev/null 2>&1
+		fi
 	else
-		iptables -I INPUT -p tcp --dport ${port} -j DROP
-		iptables -I INPUT -p udp --dport ${port} -j DROP
-		ip6tables -I INPUT -p tcp --dport ${port} -j DROP
-		ip6tables -I INPUT -p udp --dport ${port} -j DROP
+		if [[ -n $(iptables -nvL INPUT |grep :|awk -F ':' '{print $2}' |grep -w ${port}) ]]; then
+			clean_iptables(){
+				TYPE=$1
+				LINE_ARRAY=($(iptables -nvL $TYPE --line-number|grep :|grep -w ${port}|awk -F ':' '{print $2"  " $1}'|awk '{print $2" "$1}'|awk -F ' ' '{print $1}'))
+				length=${#LINE_ARRAY[@]}
+				for(( i = 0; i < ${length}; i++ ))
+				do
+					LINE_ARRAY[$i]=$[${LINE_ARRAY[$i]}-$i]
+					iptables -D $TYPE ${LINE_ARRAY[$i]}
+				done
+			}
+			clean_iptables INPUT
+			clean_iptables OUTPUT
+			if [ -e /root/test/ipv6 ]; then
+				clean_ip6tables(){
+					TYPE=$1
+					LINE_ARRAY=($(ip6tables -nvL $TYPE --line-number|grep :|grep -w ${port}|awk '{printf "%s %s\n",$1,$NF}'|awk -F ' ' '{print $1}'))
+					length=${#LINE_ARRAY[@]}
+					for(( i = 0; i < ${length}; i++ ))
+					do
+						LINE_ARRAY[$i]=$[${LINE_ARRAY[$i]}-$i]
+						ip6tables -D $TYPE ${LINE_ARRAY[$i]}
+					done
+				}
+				clean_ip6tables INPUT
+				clean_ip6tables OUTPUT
+			fi
+		fi
 	fi
 }
 #安装Docker
@@ -158,11 +205,22 @@ install_docker(){
 		chmod +x /usr/local/bin/docker-compose
 	fi
 }
+#检查VPN运行状态
+check_vpn_status(){
+	command=$1 && TYPE=$2 && message=$3
+	if [[ `${command}|grep Active` =~ 'running' ]]; then
+		green_font "${TYPE}${message}成功..."
+		sleep 2s
+	else
+		red_font "${TYPE}${message}失败！q 键退出..."
+		${command}
+	fi
+}
 
 #安装V2ray
 manage_v2ray(){
 	v2ray_info(){
-		sed -i "s#ps\":.*,#ps\": \"${myinfo}\",#g" $(cat /root/test/v2raypath)
+		sed -i 's#ps": ".*"#ps": "'${myinfo}'"#g' $(cat /root/test/v2raypath)
 		clear
 		if [[ $1 == '1' ]]; then
 			i=$[${i}+1]
@@ -337,6 +395,7 @@ manage_v2ray(){
 			echo -e "\n${Info}当前用户总数：$(red_font ${i})\n"
 			v2ray add
 			firewall_restart
+			num=$[${i}+1]
 			v2ray_info '1'
 			white_font '     ————胖波比————'
 			yello_font '——————————————————————————'
@@ -450,6 +509,7 @@ manage_v2ray(){
 		yello_font "——————————————————————————\n"
 		read -p "请输入数字[0-14](默认:1)：" num
 		[ -z "${num}" ] && num=1
+		clear
 		case "$num" in
 			0)
 			start_menu_main
@@ -484,7 +544,6 @@ manage_v2ray(){
 			change_ws
 			;;
 			10)
-			clear
 			v2ray
 			;;
 			11)
@@ -509,22 +568,19 @@ manage_v2ray(){
 		manage_v2ray_user
 	}
 	install_v2ray(){
-		source <(curl -sL ${v2ray_url}) --zh
-		find / -name group.py | grep v2ray_util > /root/test/v2raypath
-		port=$(cat /etc/v2ray/config.json | grep 'port": ' | tail -1 | sed 's/,//g' | awk -F ' ' '{print $2}')
-		add_firewall
-		firewall_restart
+		bash <(curl -sL $v2ray_url) --zh
+		find / -name group.py|grep v2ray_util > /root/test/v2raypath
 		echo -e "${Info}任意键继续..."
 		char=`get_char`
 		manage_v2ray_user
 	}
 	install_v2ray_repair(){
-		source <(curl -sL ${v2ray_url}) -k
+		bash <(curl -sL $v2ray_url) -k
 		echo -e "${Info}已保留配置更新，任意键继续..."
 		char=`get_char`
 	}
 	start_menu_v2ray(){
-		v2ray_url="https://multi.netlify.com/v2ray.sh"
+		v2ray_url='https://multi.netlify.com/v2ray.sh'
 		clear
 		white_font "\n V2Ray一键安装脚本 \c" && red_font "[v${sh_ver}]"
 		white_font "	-- 胖波比 --\n"
@@ -559,21 +615,21 @@ manage_v2ray(){
 			install_v2ray_repair
 			;;
 			4)
-			source <(curl -sL ${v2ray_url}) --remove
+			bash <(curl -sL $v2ray_url) --remove
 			echo -e "${Info}已卸载，任意键继续..."
 			char=`get_char`
 			;;
 			5)
-			v2ray restart
+			v2ray restart && sleep 2s
 			;;
 			6)
-			v2ray stop
+			v2ray stop && sleep 2s
 			;;
 			7)
-			v2ray start
+			v2ray start && sleep 2s
 			;;
 			8)
-			v2ray status
+			check_vpn_status 'service v2ray status' 'V2Ray' '运行'
 			;;
 			9)
 			exit 1
@@ -838,22 +894,22 @@ install_ssr(){
 		# Set ShadowsocksR config port
 		while true
 		do
-		dport=$(shuf -i 1000-9999 -n 1)
-		echo -e "${Info}请设置ShadowsocksR端口[1-65535]:"
-		read -p "(默认随机端口: ${dport}):" port
-		[ -z "${port}" ] && port=${dport}
-		expr ${port} + 1 &>/dev/null
-		if [ $? -eq 0 ]; then
-			if [ ${port} -ge 1 ] && [ ${port} -le 65535 ] && [ ${port:0:1} != 0 ]; then
-				echo
-				echo "---------------------------"
-				echo "port = ${port}"
-				echo "---------------------------"
-				echo
-				break
+			dport=$(shuf -i 1000-9999 -n1)
+			echo -e "${Info}请设置ShadowsocksR端口[1000-9999]："
+			read -p "(默认随机端口:${dport})：" port
+			[ -z "${port}" ] && port=${dport}
+			expr ${port} + 1 &>/dev/null
+			if [ $? -eq 0 ]; then
+				if [ ${port} -ge 1000 ] && [ ${port} -le 9999 ] && [ -z $(lsof -i:${port}) ]; then
+					echo
+					echo "---------------------------"
+					echo "port = ${port}"
+					echo "---------------------------"
+					echo
+					break
+				fi
 			fi
-		fi
-		echo -e "[${red}Error${plain}] Please enter a correct number [1-65535]"
+			echo -e "[${red}Error${plain}] Please enter a correct number [1000-9999]"
 		done
 
 		# Set shadowsocksR config stream ciphers
@@ -1099,7 +1155,7 @@ EOF
 			echo -e "${Info}以上是配置文件的内容\n"
 			#判断端口是否已有,清空port内存
 			unset port
-			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && ${port} -ge '1000' && ${port} -le '9999' && ${port} -ne '1080' ]]
 			do
 				read -p "请输入要改密的端口号：" port
 			done
@@ -1209,14 +1265,10 @@ EOF
 	add_user(){
 		#逐个添加
 		add_user_single(){
-			clear
-			jq '.port_password' /etc/shadowsocks.json
-			echo -e "${Info}以上是配置文件的内容"
-			echo -e "${Info}当前用户总数：$(red_font $(jq '.port_password | length' /etc/shadowsocks.json))\n"
-			unset port
-			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
+			port=$(shuf -i 1000-9999 -n1)
+			until [[ -z $(lsof -i:${port}) && ${port} -ne '1080' ]]
 			do
-				read -p "请输入要添加的端口号[1000-65535]：" port
+				port=$(shuf -i 1000-9999 -n1)
 			done
 			add_firewall
 			firewall_restart
@@ -1264,9 +1316,10 @@ EOF
 			unset port
 			for(( i = 0; i < ${num}; i++ ))
 			do
-				until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' ]]
+				port=$(shuf -i 1000-9999 -n1)
+				until [[ -z $(lsof -i:${port}) && ${port} -ne '1080' ]]
 				do
-					port=$(shuf -i 1000-9999 -n 1)
+					port=$(shuf -i 1000-9999 -n1)
 				done
 				add_firewall
 				password=$(openssl rand -base64 6)
@@ -1289,7 +1342,7 @@ EOF
 		#添加用户菜单
 		add_user_menu(){
 			clear
-			white_font "\n    ————胖波比————\n"
+			white_font "\n     ————胖波比————\n"
 			yello_font '—————————————————————————'
 			green_font ' 1.' '  逐个添加'
 			green_font ' 2.' '  批量添加'
@@ -1332,9 +1385,9 @@ EOF
 			jq '.port_password' /etc/shadowsocks.json
 			echo -e "${Info}以上是配置文件的内容\n"
 			unset port
-			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+			until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && ${port} -ge '1000' && ${port} -le '9999' && ${port} -ne '1080' ]]
 			do
-				read -p "请输入要删除的端口:" port
+				read -p "请输入要删除的端口：" port
 			done
 			cat /etc/shadowsocks.json | jq 'del(.port_password."'${port}'")' > /root/test/temp.json
 			cp /root/test/temp.json /etc/shadowsocks.json
@@ -1378,7 +1431,7 @@ EOF
 		}
 		delete_user_multi(){
 			clear
-			jq '.port_password' /etc/shadowsocks.json | sed '1d' | sed '$d' | sed 's#"##g' | sed 's# ##g' | sed 's#,##g' > /root/test/ppj
+			jq '.port_password' /etc/shadowsocks.json |sed '1d' |sed '$d' |sed 's#"##g' |sed 's# ##g' |sed 's#,##g' > /root/test/ppj
 			cat /root/test/ppj | while read line; do
 				port=`echo $line|awk -F ':' '{print $1}'`
 				delete_firewall
@@ -1437,16 +1490,17 @@ EOF
 		jq '.port_password' /etc/shadowsocks.json
 		echo -e "${Info}以上是配置文件的内容\n"
 		unset port
-		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && "${port}" -ge "1000" && "${port}" -le "65535" && "${port}" -ne "1080" ]]
+		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '1' && ${port} -ge '1000' && ${port} -le '9999' && ${port} -ne '1080' ]]
 		do
 			read -p "请输入要修改的端口号：" port
 		done
 		password=$(cat /root/test/ppj | grep "${port}:" | awk -F ':' '{print $2}')
 		delete_firewall
 		port1=${port}
-		until [[ `grep -c "${port}" /etc/shadowsocks.json` -eq '0' && "${port}" -ge "1000" && "${port}" -le "65535" ]]
+		port=$(shuf -i 1000-9999 -n1)
+		until [[ -z $(lsof -i:${port}) && ${port} -ne '1080' ]]
 		do
-			read -p "请输入修改后的端口[1000-65535]：" port
+			port=$(shuf -i 1000-9999 -n1)
 		done
 		add_firewall
 		firewall_restart
@@ -1607,15 +1661,17 @@ EOF
 			;;
 			4)
 			service shadowsocks restart
+			check_vpn_status 'service shadowsocks status' 'SSR' '重启'
 			;;
 			5)
 			service shadowsocks stop
 			;;
 			6)
 			service shadowsocks start
+			check_vpn_status 'service shadowsocks status' 'SSR' '启动'
 			;;
 			7)
-			service shadowsocks status
+			check_vpn_status 'service shadowsocks status' 'SSR' '运行'
 			;;
 			8)
 			exit 1
@@ -1636,6 +1692,8 @@ manage_trojan(){
 	choose_letsencrypt(){
 		letsencrypt_ip(){
 			clear && cd /root/certificate
+			sed -i 's#verify": true#verify": false#g' /root/certificate/config.json
+			sed -i 's#hostname": true#hostname": false#g' /root/certificate/config.json
 			ydomain=$(get_ip)
 			echo -e "${Info}即将生成证书,输入假信息即可,任意键继续..."
 			char=`get_char`
@@ -1649,8 +1707,24 @@ manage_trojan(){
 				touch /root/test/acme
 			fi
 			read -p "请输入已解析成功的域名：" ydomain
-			/root/.acme.sh/acme.sh --issue -d ${ydomain} --standalone
-			/root/.acme.sh/acme.sh --installcert -d ${ydomain} --fullchain-file /root/certificate/fullchain.cer --key-file /root/certificate/private.key --reloadcmd "systemctl restart trojan"
+			if [[ -z $(lsof -i:80) ]]; then
+				/root/.acme.sh/acme.sh --issue -d ${ydomain} --standalone
+			elif [[ -z $(lsof -i:443) ]]; then
+				/root/.acme.sh/acme.sh --issue -d ${ydomain} --alpn
+			else
+				command_array=($(lsof -i:80|sed '1d'|awk '{print $1}'))
+				length=${#command_array[@]}
+				for(( i = 0; i < ${length}; i++ ))
+				do
+					service ${command_array[$i]} stop
+				done
+				/root/.acme.sh/acme.sh --issue -d ${ydomain} --standalone
+				for(( i = 0; i < ${length}; i++ ))
+				do
+					service ${command_array[$i]} restart
+				done
+			fi
+			/root/.acme.sh/acme.sh --installcert -d ${ydomain} --fullchain-file /root/certificate/fullchain.cer --key-file /root/certificate/private.key
 		}
 		clear
 		white_font "\n   Trojan证书管理脚本"
@@ -1692,13 +1766,17 @@ manage_trojan(){
 	install_trojan(){
 		if [ ! -e /root/test/trojan ]; then
 			port=443
+			until [[ -z $(lsof -i:${port}) ]]
+			do
+				port=$[${port}+1]
+			done
 			add_firewall
 			firewall_restart
 			mkdir -p /root/certificate
-			touch /root/test/trojan
+			echo $port > /root/test/trojan
 		fi
 		cd /usr/local
-		VERSION=1.13.0
+		VERSION=1.14.1
 		DOWNLOADURL="https://github.com/trojan-gfw/trojan/releases/download/v${VERSION}/trojan-${VERSION}-linux-amd64.tar.xz"
 		wget --no-check-certificate "${DOWNLOADURL}"
 		tar xf "trojan-$VERSION-linux-amd64.tar.xz"
@@ -1706,12 +1784,14 @@ manage_trojan(){
 		cd trojan
 		chmod -R 755 /usr/local/trojan
 		mv config.json /etc/trojan.json
+		sed -i 's#local_port": 443#local_port": '${port}'#g' /etc/trojan.json
 		password=$(cat /proc/sys/kernel/random/uuid)
 		sed -i "s#password1#${password}#g" /etc/trojan.json
 		password=$(cat /proc/sys/kernel/random/uuid)
 		sed -i "s#password2#${password}#g" /etc/trojan.json
 		sed -i 's#open": false#open": true#g' /etc/trojan.json
 		cp examples/client.json-example /root/certificate/config.json
+		sed -i 's#remote_port": 443#remote_port": '${port}'#g' /root/certificate/config.json
 		sed -i 's#open": false#open": true#g' /root/certificate/config.json
 		choose_letsencrypt
 		cd /usr/local/trojan
@@ -1720,13 +1800,13 @@ manage_trojan(){
 		sed -i "s#example.com#${ydomain}#g" /root/certificate/config.json
 		sed -i 's#cert": "#cert": "fullchain.cer#g' /root/certificate/config.json
 		sed -i "s#sni\": \"#sni\": \"${ydomain}#g" /root/certificate/config.json
-		echo "${ydomain}" > /root/test/trojan
+		echo ${ydomain} >> /root/test/trojan
 		base64 -d <<< W1VuaXRdDQpBZnRlcj1uZXR3b3JrLnRhcmdldCANCg0KW1NlcnZpY2VdDQpFeGVjU3RhcnQ9L3Vzci9sb2NhbC90cm9qYW4vdHJvamFuIC1jIC9ldGMvdHJvamFuLmpzb24NClJlc3RhcnQ9YWx3YXlzDQoNCltJbnN0YWxsXQ0KV2FudGVkQnk9bXVsdGktdXNlci50YXJnZXQ=  > /etc/systemd/system/trojan.service
 		systemctl daemon-reload
 		systemctl enable trojan
 		systemctl start trojan
 		view_password '2'
-		echo -e "${Tip}安装完成,如需设置伪装,请手动删除配置文件中监听的 443 端口,否则会报错!!!"
+		echo -e "${Tip}安装完成,如需设置伪装,请手动删除配置文件中监听的 ${port} 端口,否则会报错!!!"
 		echo -e "${Tip}证书以及用户配置文件所在文件夹：/root/certificate"
 		echo -e "${Info}任意键返回Trojan用户管理页..."
 		char=`get_char`
@@ -2021,10 +2101,10 @@ manage_trojan(){
 	}
 	view_password(){
 		clear
-		ipinfo=$(cat /root/test/trojan)
+		ipinfo=$(cat /root/test/trojan|sed -n '2p')
+		port=$(cat /root/test/trojan|sed -n '1p')
 		pw_trojan=$(jq '.password' /etc/trojan.json)
 		length=$(jq '.password | length' /etc/trojan.json)
-		#tr_info=$(echo ${myinfo} |tr -d '\n' |od -An -tx1|tr ' ' %)
 		tr_info="$(curl -s https://ipapi.co/country/)-%E6%88%91%E4%BB%AC%E7%88%B1%E4%B8%AD%E5%9B%BD"
 		cat /root/certificate/config.json | jq 'del(.password[])' > /root/test/temp.json
 		cp /root/test/temp.json /root/certificate/config.json
@@ -2034,12 +2114,12 @@ manage_trojan(){
 			#更新用户配置文件
 			cat /root/certificate/config.json | jq '.password['${i}']="'${password}'"' > /root/test/temp.json
 			cp /root/test/temp.json /root/certificate/config.json
-			Trojanurl="trojan://${password}@${ipinfo}:443?allowInsecure=1&tfo=1#${tr_info}"
+			Trojanurl="trojan://${password}@${ipinfo}:${port}?allowInsecure=1&tfo=1#${tr_info}"
 			echo -e "密码：$(red_font $password)"
 			echo -e "Trojan链接：$(green_font $Trojanurl)\n"
 		done
 		echo -e "${Info}IP或域名：$(red_font ${ipinfo})"
-		echo -e "${Info}端口：$(red_font 443)"
+		echo -e "${Info}端口：$(red_font ${port})"
 		echo -e "${Info}当前用户总数：$(red_font ${length})\n"
 		if [[ $1 == "1" ]]; then
 			echo -e "${Info}任意键返回Trojan用户管理页..."
@@ -2126,15 +2206,17 @@ manage_trojan(){
 			;;
 			4)
 			systemctl restart trojan
+			check_vpn_status 'systemctl status trojan' 'Trojan' '重启'
 			;;
 			5)
 			systemctl stop trojan
 			;;
 			6)
 			systemctl start trojan
+			check_vpn_status 'systemctl status trojan' 'Trojan' '启动'
 			;;
 			7)
-			systemctl status trojan
+			check_vpn_status 'systemctl status trojan' 'Trojan' '运行'
 			;;
 			8)
 			exit 1
@@ -2790,6 +2872,7 @@ set_fakeweb(){
 	clear
 	webinfo='请输入网站访问端口(未占用端口)(默认:80)：'
 	check_port
+	install_docker
 	i=0
 	until [[ $i -ge '1' && ! -d "${fakeweb}" ]]
 	do
@@ -2816,6 +2899,8 @@ manage_dingyue(){
 			echo -e "${Info}你已安装订阅程序..."
 		fi
 		echo -e "\n${Info}首页地址： http://$(get_ip):${port}"
+		echo -e "${Info}订阅地址： http://$(get_ip):${port}/dingyue.html"
+		echo -e "${Tip}订阅地址主页在伪装网站首页的目录里..."
 		echo -e "${Info}按任意键返回订阅链接管理页..."
 		char=`get_char`
 		start_menu_dingyue
@@ -2874,12 +2959,14 @@ manage_dingyue(){
 				clear
 				pw_trojan=$(jq '.password' /etc/trojan.json)
 				length=$(jq '.password | length' /etc/trojan.json)
-				tr_info=$(echo ${myinfo} |tr -d '\n' |od -An -tx1|tr ' ' %)
+				tr_info="$(curl -s https://ipapi.co/country/)-%E6%88%91%E4%BB%AC%E7%88%B1%E4%B8%AD%E5%9B%BD"
+				ipinfo=$(cat /root/test/trojan|sed -n '2p')
+				port=$(cat /root/test/trojan|sed -n '1p')
 				rm -f $(cat /root/test/dingyue | head -n 1)/html/trojan.html
 				for i in `seq 0 $[length-1]`
 				do
 					password=$(echo $pw_trojan | jq ".[$i]" | sed 's/"//g')
-					echo -e "trojan://${password}@$(cat /root/test/trojan):443?allowInsecure=1&tfo=1#${tr_info}" >> $(cat /root/test/dingyue | head -n 1)/html/trojan.html
+					echo -e "trojan://${password}@${ipinfo}:${port}?allowInsecure=1&tfo=1#${tr_info}" >> $(cat /root/test/dingyue | head -n 1)/html/trojan.html
 				done
 				base64 <<< $(cat $(cat /root/test/dingyue | head -n 1)/html/trojan.html) > $(cat /root/test/dingyue | head -n 1)/html/trojan.html
 				touch /root/test/dytrojan
@@ -3161,87 +3248,34 @@ manage_qrcode(){
 manage_btpanel(){
 	set_btpanel(){
 		clear
-		bt default |sed "s#IP#$(get_ip)#g" |sed "s#8888#$(cat /root/test/btport)#g"
-		read -p "是否更改用户密码？[Y/n](默认:n)：" yn
-		[[ -z "${yn}" ]] && yn="n"
-		if [[ ${yn} == [Yy] ]]; then
-			read -p "请输入新密码(默认:pangbobi)：" password
-			[[ -z "${password}" ]] && password='pangbobi'
-			cd /www/server/panel && python tools.py panel $password
-			cd /root
-		fi
-	}
-	install_btpanel(){
-		port=20 && add_firewall
-		port=21 && add_firewall
-		port=80 && add_firewall
-		port=443 && add_firewall
-		port=888 && add_firewall
-		webinfo='请输入宝塔面板访问端口(默认:80)：'
-		check_port && add_firewall && firewall_restart
-		echo -e "${port}" > /root/test/btport
-		echo -e "
-+----------------------------------------------------------------------
-| Bt-WebPanel 5.x FOR CentOS/Redhat/Fedora/Ubuntu/Debian
-+----------------------------------------------------------------------
-| Copyright © 2015-2018 BT-SOFT(http://www.bt.cn) All rights reserved.
-+----------------------------------------------------------------------
-| The WebPanel URL will be http://$(get_ip):${port} when installed.
-+----------------------------------------------------------------------
-"
-		echo -e "\033[31m# 注意: 5.x系列Linux面板从2020年1月1日起终止维护，与技术支持，请考虑安装全新的7.x版本 宝塔官网: https://www.bt.cn\033[0m"
+		bt
 		echo -e "${Info}按任意键继续..."
 		char=`get_char`
-		if [[ ${release} == "centos" ]]; then
-			bt_dow_url='https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/install-centos.sh'
-		else
-			bt_dow_url='https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/install-ubuntu.sh'
-		fi
-		wget -O install-bt.sh $bt_dow_url && chmod +x install-bt.sh
-		startTime=`date +%s`
-		source ./install-bt.sh
-		echo -e "=================================================================="
-		echo -e "\033[32mCongratulations! Installed successfully! \033[0m"
-		echo -e "\033[31m# 注意: 5.x系列Linux面板从2020年1月1日起终止维护，与技术支持，请考虑安装全新的7.x版本 宝塔官网: https://www.bt.cn\033[0m"
-		echo -e "=================================================================="
-		echo  "Bt-Panel: http://$address:$port"
-		echo -e "username: $username"
-		echo -e "password: $password"
-		echo -e "\033[33mWarning:\033[0m"
-		echo -e "\033[33mIf you cannot access the panel, \033[0m"
-		echo -e "\033[33mrelease the following port (${port}|888|443|80|20|21) in the security group\033[0m"
-		echo -e "=================================================================="
-		endTime=`date +%s`
-		((outTime=($endTime-$startTime)/60))
-		echo -e "Time consumed:\033[32m $outTime \033[0mMinute!"
-		rm -f install-bt.sh
-		echo -e "\n${Info}按任意键返回主页..."
-		char=`get_char`
-		start_menu_main
 	}
-	uninstall_btpanel(){
-		wget https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/bt-uninstall.sh && chmod +x bt-uninstall.sh && ./bt-uninstall.sh
-		rm -f bt-uninstall.sh
+	install_btpanel(){
+		wget -O bt_install.sh https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/bt_install%20.sh && chmod +x bt_install.sh && ./bt_install.sh
+		start_menu_main
 	}
 	start_menu_btpanel(){
 		clear
 		white_font "\n BT-PANEL一键安装脚本 \c" && red_font "[v${sh_ver}]"
 		white_font "	-- 胖波比 --\n"
 		yello_font '———————BT-PANEL管理—————————'
-		green_font ' 1.' '  查看与重设BT-PANEL'
+		green_font ' 1.' '  管理BT-PANEL'
 		yello_font '————————————————————————————'
 		green_font ' 2.' '  安装BT-PANEL'
 		green_font ' 3.' '  卸载BT-PANEL'
+		green_font ' 4.' '  解除拉黑,解锁文件'
 		yello_font '————————————————————————————'
-		green_font ' 4.' '  重启BT-PANEL'
-		green_font ' 5.' '  关闭BT-PANEL'
-		green_font ' 6.' '  启动BT-PANEL'
-		green_font ' 7.' '  查看BT-PANEL状态'
+		green_font ' 5.' '  重启BT-PANEL'
+		green_font ' 6.' '  关闭BT-PANEL'
+		green_font ' 7.' '  启动BT-PANEL'
+		green_font ' 8.' '  查看BT-PANEL状态'
 		yello_font '————————————————————————————'
 		green_font ' 0.' '  回到主页'
-		green_font ' 8.' '  退出脚本'
+		green_font ' 9.' '  退出脚本'
 		yello_font "————————————————————————————\n"
-		read -p "请输入数字[0-8](默认:1)：" num
+		read -p "请输入数字[0-9](默认:1)：" num
 		[ -z "${num}" ] && num=1
 		case "$num" in
 			0)
@@ -3254,26 +3288,31 @@ manage_btpanel(){
 			install_btpanel
 			;;
 			3)
-			uninstall_btpanel
+			wget -O bt_uninstall.sh https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/bt_uninstall.sh && chmod +x bt_uninstall.sh && ./bt_uninstall.sh
 			;;
 			4)
-			bt restart
+			wget -O waf.sh https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/waf.sh && chmod +x waf.sh && ./waf.sh
 			;;
 			5)
-			bt stop
+			bt restart
+			check_vpn_status 'bt status' '宝塔面板' '重启'
 			;;
 			6)
-			bt start
+			bt stop
 			;;
 			7)
-			bt status && sleep 2s
+			bt start
+			check_vpn_status 'bt status' '宝塔面板' '启动'
 			;;
 			8)
+			check_vpn_status 'bt status' '宝塔面板' '运行'
+			;;
+			9)
 			exit 1
 			;;
 			*)
 			clear
-			echo -e "${Error}请输入正确数字 [0-8]"
+			echo -e "${Error}请输入正确数字 [0-9]"
 			sleep 2s
 			start_menu_btpanel
 			;;
@@ -3315,6 +3354,7 @@ manage_forsakenmail(){
 			curl -sL https://deb.nodesource.com/setup_10.x | bash -
 		fi 
 		#安装Forsaken Mail
+		mkdir -p /opt && cd /opt
 		git clone https://github.com/denghongcai/forsaken-mail.git
 		cd forsaken-mail
 		npm install pm2@latest -g
@@ -3327,7 +3367,8 @@ manage_forsakenmail(){
 		echo -e "${Info}按任意键返回首页..."
 		char=`get_char`
 	elif [[ $num == '2' ]]; then
-		rm -rf forsaken-mail
+		chattr -i /opt/forsaken-mail/public/.user.ini
+		rm -rf /opt/forsaken-mail
 	else
 		manage_forsakenmail
 	fi
@@ -5486,338 +5527,338 @@ reinstall_sys(){
 	github="raw.githubusercontent.com/chiakge/installNET/master"
 	#安装环境
 	first_job(){
-	if [[ ${release} == "centos" ]]; then
-		yum install -y xz openssl gawk file
-	elif [[ ${release} == "debian" || ${release} == "ubuntu" ]]; then
-		apt-get update
-		apt-get install -y xz-utils openssl gawk file	
-	fi
+		if [[ ${release} == "centos" ]]; then
+			yum install -y xz openssl gawk file
+		elif [[ ${release} == "debian" || ${release} == "ubuntu" ]]; then
+			apt-get update
+			apt-get install -y xz-utils openssl gawk file	
+		fi
 	}
-
 	# 安装系统
 	InstallOS(){
-	clear
-	echo -e "\n${Info}重装系统需要时间,请耐心等待..."
-	echo -e "${Tip}重装完成后,请用root身份从22端口连接服务器！\n"
-	white_font '     ————胖波比————'
-	yello_font '—————————————————————————'
-	green_font ' 0.' '  返回主页'
-	green_font ' 1.' '  使用高强度随机密码'
-	green_font ' 2.' '  输入自定义密码'
-	yello_font "—————————————————————————\n"
-	read -p "请输入数字[0-2](默认:1)：" num
-	[ -z "${num}" ] && num=1
-	case "$num" in
-		0)
-		start_menu_main
-		;;
-		1)
-		pw=$(tr -dc 'A-Za-z0-9!@#$%^&*()[]{}+=_,' </dev/urandom | head -c 17)
-		;;
-		2)
-		read -p "请设置密码(默认:pangbobi)：" pw
-		[ -z "${pw}" ] && pw="pangbobi"
-		;;
-		*)
 		clear
-		echo -e "${Error}请输入正确数字 [0-2]"
-		sleep 2s
-		reinstall_sys
-		;;
-	esac
-	echo -e "\n${Info}您的密码是：$(red_font $pw)"
-	echo -e "${Tip}请务必记录您的密码！然后任意键继续..."
-	char=`get_char`
-	if [[ ${model} == "自动" ]]; then
-		model="a"
-	else 
-		model="m"
-	fi
-	if [[ ${country} == "国外" ]]; then
-		country=""
-	else 
-		if [[ ${os} == "c" ]]; then
-			country="--mirror https://mirrors.tuna.tsinghua.edu.cn/centos/"
-		elif [[ ${os} == "u" ]]; then
-			country="--mirror https://mirrors.tuna.tsinghua.edu.cn/ubuntu/"
-		elif [[ ${os} == "d" ]]; then
-			country="--mirror https://mirrors.tuna.tsinghua.edu.cn/debian/"
+		TYPE=$1
+		echo -e "\n${Info}重装系统需要时间,请耐心等待..."
+		echo -e "${Tip}重装完成后,请用root身份从22端口连接服务器！\n"
+		white_font '     ————胖波比————'
+		yello_font '—————————————————————————'
+		green_font ' 0.' '  返回主页'
+		green_font ' 1.' '  使用高强度随机密码'
+		green_font ' 2.' '  输入自定义密码'
+		yello_font "—————————————————————————\n"
+		read -p "请输入数字[0-2](默认:1)：" num
+		[ -z "${num}" ] && num=1
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			pw=$(tr -dc 'A-Za-z0-9!@#$%^&*()[]{}+=_,' </dev/urandom | head -c 17)
+			;;
+			2)
+			read -p "请设置密码(默认:pangbobi)：" pw
+			[ -z "${pw}" ] && pw="pangbobi"
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-2]"
+			sleep 2s
+			reinstall_sys
+			;;
+		esac
+		echo -e "\n${Info}您的密码是：$(red_font $pw)"
+		echo -e "${Tip}请务必记录您的密码！然后任意键继续..."
+		char=`get_char`
+		if [[ ${model} == "自动" ]]; then
+			model="a"
+		else 
+			model="m"
 		fi
-	fi
-	wget --no-check-certificate https://${github}/InstallNET.sh && chmod -x InstallNET.sh
-	bash InstallNET.sh -${os} ${1} -v ${vbit} -${model} -p ${pw} ${country}
+		if [[ ${country} == "国外" ]]; then
+			country=""
+		else 
+			if [[ ${os} == "c" ]]; then
+				country="--mirror https://mirrors.tuna.tsinghua.edu.cn/centos/"
+			elif [[ ${os} == "u" ]]; then
+				country="--mirror https://mirrors.tuna.tsinghua.edu.cn/ubuntu/"
+			elif [[ ${os} == "d" ]]; then
+				country="--mirror https://mirrors.tuna.tsinghua.edu.cn/debian/"
+			fi
+		fi
+		wget --no-check-certificate https://${github}/InstallNET.sh && chmod +x InstallNET.sh
+		bash InstallNET.sh -${os} ${TYPE} -v ${vbit} -${model} -p ${pw} ${country}
 	}
 	# 安装系统
 	installadvanced(){
-	read -p "请设置参数：" advanced
-	wget --no-check-certificate https://${github}/InstallNET.sh && chmod -x InstallNET.sh
-	bash InstallNET.sh $advanced
+		read -p "请设置参数：" advanced
+		wget --no-check-certificate https://${github}/InstallNET.sh && chmod +x InstallNET.sh
+		bash InstallNET.sh $advanced
 	}
+
 	# 切换位数
 	switchbit(){
-	if [[ ${vbit} == "64" ]]; then
-		vbit="32"
-	else
-		vbit="64"
-	fi
+		if [[ ${vbit} == "64" ]]; then
+			vbit="32"
+		else
+			vbit="64"
+		fi
 	}
 	# 切换模式
 	switchmodel(){
-	if [[ ${model} == "自动" ]]; then
-		model="手动"
-	else
-		model="自动"
-	fi
+		if [[ ${model} == "自动" ]]; then
+			model="手动"
+		else
+			model="自动"
+		fi
 	}
 	# 切换国家
 	switchcountry(){
-	if [[ ${country} == "国外" ]]; then
-		country="国内"
-	else
-		country="国外"
-	fi
+		if [[ ${country} == "国外" ]]; then
+			country="国内"
+		else
+			country="国外"
+		fi
 	}
 
 	#安装CentOS
 	installCentos(){
-	clear
-	os="c"
-	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
-	white_font "		  -- 胖波比 --\n"
-	yello_font '————————————选择版本————————————'
-	green_font ' 1.' '  安装 CentOS6.8系统'
-	green_font ' 2.' '  安装 CentOS6.9系统'
-	yello_font '————————————切换模式————————————'
-	green_font ' 3.' '  切换安装位数'
-	green_font ' 4.' '  切换安装模式'
-	green_font ' 5.' '  切换镜像源'
-	yello_font '————————————————————————————————'
-	green_font ' 0.' '  回到主页'
-	green_font ' 6.' '  返回上页'
-	green_font ' 7.' '  退出脚本'
-	yello_font "————————————————————————————————\n"
-	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
-	read -p "请输入数字[0-7](默认:6)：" num
-	[ -z "${num}" ] && num=6
-	case "$num" in
-		0)
-		start_menu_main
-		;;
-		1)
-		InstallOS "6.8"
-		;;
-		2)
-		InstallOS "6.9"
-		;;
-		3)
-		switchbit
-		installCentos
-		;;
-		4)
-		switchmodel
-		installCentos
-		;;
-		5)
-		switchcountry
-		installCentos
-		;;
-		6)
-		start_menu_resys
-		;;
-		7)
-		exit 1
-		;;
-		*)
 		clear
-		echo -e "${Error}请输入正确数字 [0-7]"
-		sleep 2s
-		installCentos
-		;;
-	esac
+		os="c"
+		white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "		  -- 胖波比 --\n"
+		yello_font '————————————选择版本————————————'
+		green_font ' 1.' '  安装 CentOS6.8系统'
+		green_font ' 2.' '  安装 CentOS6.9系统'
+		yello_font '————————————切换模式————————————'
+		green_font ' 3.' '  切换安装位数'
+		green_font ' 4.' '  切换安装模式'
+		green_font ' 5.' '  切换镜像源'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 6.' '  返回上页'
+		green_font ' 7.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+		read -p "请输入数字[0-7](默认:6)：" num
+		[ -z "${num}" ] && num=6
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			InstallOS "6.8"
+			;;
+			2)
+			InstallOS "6.9"
+			;;
+			3)
+			switchbit
+			installCentos
+			;;
+			4)
+			switchmodel
+			installCentos
+			;;
+			5)
+			switchcountry
+			installCentos
+			;;
+			6)
+			start_menu_resys
+			;;
+			7)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-7]"
+			sleep 2s
+			installCentos
+			;;
+		esac
 	}
-
 	#安装Debian
 	installDebian(){
-	clear
-	os="d"
-	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
-	white_font "		  -- 胖波比 --\n"
-	yello_font '————————————选择版本————————————'
-	green_font ' 1.' '  安装 Debian7系统'
-	green_font ' 2.' '  安装 Debian8系统'
-	green_font ' 3.' '  安装 Debian9系统'
-	yello_font '————————————切换模式————————————'
-	green_font ' 4.' '  切换安装位数'
-	green_font ' 5.' '  切换安装模式'
-	green_font ' 6.' '  切换镜像源'
-	yello_font '————————————————————————————————'
-	green_font ' 0.' '  回到主页'
-	green_font ' 7.' '  返回上页'
-	green_font ' 8.' '  退出脚本'
-	yello_font "————————————————————————————————\n"
-	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
-	read -p "请输入数字[0-8](默认:3)：" num
-	[ -z "${num}" ] && num=3
-	case "$num" in
-		0)
-		start_menu_main
-		;;
-		1)
-		InstallOS "7"
-		;;
-		2)
-		InstallOS "8"
-		;;
-		3)
-		InstallOS "9"
-		;;
-		4)
-		switchbit
-		installDebian
-		;;
-		5)
-		switchmodel
-		installDebian
-		;;
-		6)
-		switchcountry
-		installDebian
-		;;
-		7)
-		start_menu_resys
-		;;
-		8)
-		exit 1
-		;;
-		*)
 		clear
-		echo -e "${Error}请输入正确数字 [0-8]"
-		sleep 2s
-		installCentos
-		;;
-	esac
+		os="d"
+		white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "		  -- 胖波比 --\n"
+		yello_font '————————————选择版本————————————'
+		green_font ' 1.' '  安装 Debian7系统'
+		green_font ' 2.' '  安装 Debian8系统'
+		green_font ' 3.' '  安装 Debian9系统'
+		yello_font '————————————切换模式————————————'
+		green_font ' 4.' '  切换安装位数'
+		green_font ' 5.' '  切换安装模式'
+		green_font ' 6.' '  切换镜像源'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 7.' '  返回上页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+		read -p "请输入数字[0-8](默认:3)：" num
+		[ -z "${num}" ] && num=3
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			InstallOS "7"
+			;;
+			2)
+			InstallOS "8"
+			;;
+			3)
+			InstallOS "9"
+			;;
+			4)
+			switchbit
+			installDebian
+			;;
+			5)
+			switchmodel
+			installDebian
+			;;
+			6)
+			switchcountry
+			installDebian
+			;;
+			7)
+			start_menu_resys
+			;;
+			8)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-8]"
+			sleep 2s
+			installCentos
+			;;
+		esac
 	}
-
 	#安装Ubuntu
 	installUbuntu(){
-	clear
-	os="u"
-	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
-	white_font "		  -- 胖波比 --\n"
-	yello_font '————————————选择版本————————————'
-	green_font ' 1.' '  安装 Ubuntu14系统'
-	green_font ' 2.' '  安装 Ubuntu16系统'
-	green_font ' 3.' '  安装 Ubuntu18系统'
-	yello_font '————————————切换模式————————————'
-	green_font ' 4.' '  切换安装位数'
-	green_font ' 5.' '  切换安装模式'
-	green_font ' 6.' '  切换镜像源'
-	yello_font '————————————————————————————————'
-	green_font ' 0.' '  回到主页'
-	green_font ' 7.' '  返回上页'
-	green_font ' 8.' '  退出脚本'
-	yello_font "————————————————————————————————\n"
-	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
-	read -p "请输入数字[0-8](默认:3)：" num
-	[ -z "${num}" ] && num=3
-	case "$num" in
-		0)
-		start_menu_main
-		;;
-		1)
-		InstallOS "trusty"
-		;;
-		2)
-		InstallOS "xenial"
-		;;
-		3)
-		InstallOS "cosmic"
-		;;
-		4)
-		switchbit
-		installUbuntu
-		;;
-		5)
-		switchmodel
-		installUbuntu
-		;;
-		6)
-		switchcountry
-		installUbuntu
-		;;
-		7)
-		start_menu_resys
-		;;
-		8)
-		exit 1
-		;;
-		*)
 		clear
-		echo -e "${Error}请输入正确数字 [0-8]"
-		sleep 2s
-		installCentos
-		;;
-	esac
+		os="u"
+		white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "		  -- 胖波比 --\n"
+		yello_font '————————————选择版本————————————'
+		green_font ' 1.' '  安装 Ubuntu14系统'
+		green_font ' 2.' '  安装 Ubuntu16系统'
+		green_font ' 3.' '  安装 Ubuntu18系统'
+		yello_font '————————————切换模式————————————'
+		green_font ' 4.' '  切换安装位数'
+		green_font ' 5.' '  切换安装模式'
+		green_font ' 6.' '  切换镜像源'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 7.' '  返回上页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+		read -p "请输入数字[0-8](默认:3)：" num
+		[ -z "${num}" ] && num=3
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			InstallOS "trusty"
+			;;
+			2)
+			InstallOS "xenial"
+			;;
+			3)
+			InstallOS "cosmic"
+			;;
+			4)
+			switchbit
+			installUbuntu
+			;;
+			5)
+			switchmodel
+			installUbuntu
+			;;
+			6)
+			switchcountry
+			installUbuntu
+			;;
+			7)
+			start_menu_resys
+			;;
+			8)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-8]"
+			sleep 2s
+			installCentos
+			;;
+		esac
 	}
+
 	#开始菜单
 	start_menu_resys(){
-	clear
-	white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
-	white_font "		  -- 胖波比 --\n"
-	yello_font '————————————重装系统————————————'
-	green_font ' 1.' '  安装 CentOS系统'
-	green_font ' 2.' '  安装 Debian系统'
-	green_font ' 3.' '  安装 Ubuntu系统'
-	green_font ' 4.' '  高级模式(自定义参数)'
-	yello_font '————————————切换模式————————————'
-	green_font ' 5.' '  切换安装位数'
-	green_font ' 6.' '  切换安装模式'
-	green_font ' 7.' '  切换镜像源'
-	yello_font '————————————————————————————————'
-	green_font ' 0.' '  回到主页'
-	green_font ' 8.' '  退出脚本'
-	yello_font "————————————————————————————————\n"
-	echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
-	read -p "请输入数字[0-8](默认:2)：" num
-	[ -z "${num}" ] && num=2
-	case "$num" in
-		0)
-		start_menu_main
-		;;
-		1)
-		installCentos
-		;;
-		2)
-		installDebian
-		;;
-		3)
-		installUbuntu
-		;;
-		4)
-		installadvanced
-		;;
-		5)
-		switchbit
-		start_menu_resys
-		;;
-		6)
-		switchmodel
-		start_menu_resys
-		;;
-		7)
-		switchcountry
-		start_menu_resys
-		;;
-		8)
-		exit 1
-		;;
-		*)
 		clear
-		echo -e "${Error}请输入正确数字 [0-8]"
-		sleep 2s
-		start_menu_resys
-		;;
-	esac
+		white_font "\n 一键网络重装管理脚本 \c" && red_font "[v${sh_ver}]"
+		white_font "		  -- 胖波比 --\n"
+		yello_font '————————————重装系统————————————'
+		green_font ' 1.' '  安装 CentOS系统'
+		green_font ' 2.' '  安装 Debian系统'
+		green_font ' 3.' '  安装 Ubuntu系统'
+		green_font ' 4.' '  高级模式(自定义参数)'
+		yello_font '————————————切换模式————————————'
+		green_font ' 5.' '  切换安装位数'
+		green_font ' 6.' '  切换安装模式'
+		green_font ' 7.' '  切换镜像源'
+		yello_font '————————————————————————————————'
+		green_font ' 0.' '  回到主页'
+		green_font ' 8.' '  退出脚本'
+		yello_font "————————————————————————————————\n"
+		echo -e "当前模式: 安装$(red_font $vbit)位系统,$(red_font $model)模式,$(red_font $country)镜像源.\n"
+		read -p "请输入数字[0-8](默认:2)：" num
+		[ -z "${num}" ] && num=2
+		case "$num" in
+			0)
+			start_menu_main
+			;;
+			1)
+			installCentos
+			;;
+			2)
+			installDebian
+			;;
+			3)
+			installUbuntu
+			;;
+			4)
+			installadvanced
+			;;
+			5)
+			switchbit
+			start_menu_resys
+			;;
+			6)
+			switchmodel
+			start_menu_resys
+			;;
+			7)
+			switchcountry
+			start_menu_resys
+			;;
+			8)
+			exit 1
+			;;
+			*)
+			clear
+			echo -e "${Error}请输入正确数字 [0-8]"
+			sleep 2s
+			start_menu_resys
+			;;
+		esac
 	}
 	first_job
 	model="自动"
@@ -5829,32 +5870,80 @@ reinstall_sys(){
 #设置防火墙
 set_firewall(){
 	add_firewall_single(){
-		clear
 		until [[ "${port}" -ge "1" && "${port}" -le "65535" ]]
 		do
-			read -p "请输入端口号[1-65535]：" port
+			echo && read -p "请输入端口号[1-65535]：" port
 		done
 		add_firewall
 		firewall_restart
 	}
 	delete_firewall_single(){
-		clear
 		until [[ "${port}" -ge "1" && "${port}" -le "65535" ]]
 		do
-			read -p "请输入端口号[1-65535]：" port
+			echo && read -p "请输入端口号[1-65535]：" port
 		done
 		delete_firewall
+		firewall_restart
+	}
+	delete_firewall_free(){
+		if [[ ${release} == "centos" &&  ${version} -ge "7" ]]; then
+			port_array=($(firewall-cmd --zone=public --list-ports|sed 's# #\n#g'|grep tcp|sed 's#/tcp##g'))
+			length=${#port_array[@]}
+			for(( i = 0; i < ${length}; i++ ))
+			do
+				[[ -z $(lsof -i:${port_array[$i]}) ]] &&  firewall-cmd --zone=public --remove-port=${port_array[$i]}/tcp --remove-port=${port_array[$i]}/udp --permanent >/dev/null 2>&1
+			done
+		else
+			clean_iptables_free(){
+				TYPE=$1
+				LINE_ARRAY=($(iptables -nvL $TYPE --line-number|grep :|awk -F ':' '{print $2"  " $1}'|awk '{print $2" "$1}'|awk -F ' ' '{print $1}'))
+				port_array=($(iptables -nvL $TYPE --line-number|grep :|awk -F ':' '{print $2"  " $1}'|awk '{print $2" "$1}'|awk -F ' ' '{print $2}'))
+				length=${#LINE_ARRAY[@]} && t=0
+				for(( i = 0; i < ${length}; i++ ))
+				do
+					if [[ -z $(lsof -i:${port_array[$i]}) ]]; then
+						LINE_ARRAY[$i]=$[${LINE_ARRAY[$i]}-$t]
+						iptables -D $TYPE ${LINE_ARRAY[$i]}
+						t=$[${t}+1]
+					fi
+				done
+			}
+			clean_iptables_free INPUT
+			clean_iptables_free OUTPUT
+			if [ -e /root/test/ipv6 ]; then
+				clean_ip6tables_free(){
+					TYPE=$1
+					LINE_ARRAY=($(ip6tables -nvL $TYPE --line-number|grep :|awk '{printf "%s %s\n",$1,$NF}'|awk -F ' ' '{print $1}'))
+					port_array=($(ip6tables -nvL $TYPE --line-number|grep :|awk '{printf "%s %s\n",$1,$NF}'|awk -F ':' '{print $2}'))
+					length=${#LINE_ARRAY[@]} && t=0
+					for(( i = 0; i < ${length}; i++ ))
+					do
+						if [[ -z $(lsof -i:${port_array[$i]}) ]]; then
+							LINE_ARRAY[$i]=$[${LINE_ARRAY[$i]}-$t]
+							ip6tables -D $TYPE ${LINE_ARRAY[$i]}
+							t=$[${t}+1]
+						fi
+					done
+				}
+				clean_ip6tables_free INPUT
+				clean_ip6tables_free OUTPUT
+			fi
+		fi
 		firewall_restart
 	}
 	delete_firewall_all(){
 		echo -e "${Info}开始设置防火墙..."
 		if [[ ${release} == "centos" && ${version} -ge "7" ]]; then
-			firewall-cmd --permanent --zone=public --remove-port=1-65535/tcp > /dev/null 2>&1
-			firewall-cmd --permanent --zone=public --remove-port=1-65535/udp > /dev/null 2>&1
+			firewall-cmd --zone=public --remove-port=1-65535/tcp --remove-port=1-65535/udp --permanent >/dev/null 2>&1
 		else
 			iptables -P INPUT ACCEPT
 			iptables -F
 			iptables -X
+			if [ -e /root/test/ipv6 ]; then
+				ip6tables -P INPUT ACCEPT
+				ip6tables -F
+				ip6tables -X
+			fi
 		fi
 		add_firewall_base
 		firewall_restart
@@ -5864,16 +5953,18 @@ set_firewall(){
 	white_font "\n Firewall一键管理脚本 \c" && red_font "[v${sh_ver}]"
 	white_font "	-- 胖波比 --\n"
 	yello_font '————————Firewall管理————————'
-	green_font ' 1.' '  添加防火墙端口'
-	green_font ' 2.' '  删除防火墙端口'
-	green_font ' 3.' '  添加所有防火墙'
-	green_font ' 4.' '  删除所有防火墙'
+	green_font ' 1.' '  开放防火墙端口'
+	green_font ' 2.' '  关闭防火墙端口'
+	green_font ' 3.' '  关闭空闲端口'
+	green_font ' 4.' '  开放所有防火墙'
+	green_font ' 5.' '  关闭所有防火墙'
 	yello_font '————————————————————————————'
 	green_font ' 0.' '  回到主页'
-	green_font ' 5.' '  退出脚本'
+	green_font ' 6.' '  退出脚本'
 	yello_font "————————————————————————————\n"
-	read -p "请输入数字[0-5](默认:0)：" num
-	[ -z "${num}" ] && num=0
+	read -p "请输入数字[0-6](默认:1)：" num
+	[ -z "${num}" ] && num=1
+	clear
 	case "$num" in
 		0)
 		start_menu_main
@@ -5885,10 +5976,160 @@ set_firewall(){
 		delete_firewall_single
 		;;
 		3)
-		add_firewall_all
+		delete_firewall_free
 		;;
 		4)
+		add_firewall_all
+		;;
+		5)
 		delete_firewall_all
+		;;
+		6)
+		exit 1
+		;;
+		*)
+		clear
+		echo -e "${Error}请输入正确数字 [0-6]"
+		sleep 2s
+		set_firewall
+		;;
+	esac
+	set_firewall
+}
+
+#远程服务器管理
+remote_vps(){
+	view_vps(){
+		if [ ! -e /root/test/vps_list ]; then
+			echo -e "\n${Error}没有添加远程服务器，按任意键添加..."
+			char=`get_char`
+			add_vps
+		fi
+		echo '序号 IP地址 SSH端口 用户 登录密码 备注' > /root/test/temp
+		cat /root/test/vps_list >> /root/test/temp
+		cat /root/test/temp|awk '{print "\033[32m\033[01m"$1"\033[0m","\033[35m\033[01m"$2"\033[0m","\033[33m\033[01m"$3"\033[0m","\033[34m\033[01m"$4"\033[0m","\033[31m\033[01m"$5"\033[0m","\033[37m\033[01m"$6"\033[0m"}'|column -t
+		echo && length=$(sed -n '$=' /root/test/vps_list)
+		if [[ $1 == '1' ]]; then
+			unset line
+			until [[ ${line} -ge '1' && ${line} -le "${length}" ]]
+			do
+				read -p "请输入数字序号[1-${length}]：" line
+			done
+		fi
+	}
+	add_vps(){
+		if [ -e /root/test/vps_list ]; then
+			view_vps '2'
+			number=$[${length}+1]
+			result=$(cat /root/test/vps_list)
+		else
+			number=1
+			wget -qO sshcopy https://github.com/Jrohy/sshcopy/releases/download/v1.4/sshcopy_linux_386 && chmod +x sshcopy
+		fi
+		read -p "请输入远程服务器的IP地址：" IP
+		if [[ $result =~ "$IP" ]]; then
+			echo -e "${Tip}已添加过 ${IP}"
+			yello_font '————————————————————'
+			green_font ' 1.' '  直接连接'
+			green_font ' 2.' '  修改信息'
+			yello_font '————————————————————'
+			read -p "请选择要对 ${IP} 进行的操作[1-2](默认:1)：" num
+			[ -z "${num}" ] && num=1
+			clear
+			if [[ $num == '2' ]]; then
+				modify_vps
+			else
+				connect_vps
+			fi
+		fi
+		read -p "请输入 ${IP} 的SSH端口：" ssh_port
+		read -p "请输入 ${IP} 的登录用户：" user
+		read -p "请输入 ${IP} 的登录密码：" passward
+		read -p "请添加 ${IP} 的备注：" tips
+		./sshcopy -ip $IP -user $user -port $ssh_port -pass $passward
+		echo -e "$number $IP $ssh_port $user $passward $tips" >> /root/test/vps_list
+	}
+	delete_vps(){
+		view_vps '1'
+		sed -i "${line}d" /root/test/vps_list
+	}
+	modify_vps(){
+		view_vps '1'
+		old_info=$(sed -n "${line}p" /root/test/vps_list)
+		vps_array=($old_info)
+		yello_font '————————————————————'
+		green_font ' 1.' '  修改IP地址'
+		green_font ' 2.' '  修改SSH端口'
+		green_font ' 3.' '  修改用户'
+		green_font ' 4.' '  修改密码'
+		green_font ' 5.' '  修改备注'
+		yello_font '————————————————————'
+		read -p "请选择要修改的类别[1-5](默认:1)：" num
+		[ -z "${num}" ] && num=1
+		read -p "要修改 ${vps_array[$num]} 为：" new_info
+		vps_array[$num]=$new_info
+		new_info=$(echo ${vps_array[@]})
+		sed -i "s/${old_info}/${new_info}/g" /root/test/vps_list
+		if [[ $num != '5' ]]; then
+			IP=${vps_array[1]}
+			ssh_port=${vps_array[2]}
+			user=${vps_array[3]}
+			passward=${vps_array[4]}
+			./sshcopy -ip $IP -user $user -port $ssh_port -pass $passward
+		fi
+		yello_font '————————————————————'
+		green_font ' 1.' '  继续修改'
+		green_font ' 2.' '  返回上页'
+		yello_font '————————————————————'
+		read -p "请输入数字[1-2](默认:1)：" num
+		if [[ $num != '2' ]]; then
+			clear
+			modify_vps
+		else
+			remote_vps
+		fi
+	}
+	connect_vps(){
+		view_vps '1'
+		echo -e "${Info}输入命令 exit 退出远程服务器，按任意键继续..."
+		char=`get_char`
+		vps_array=($(sed -n "${line}p" /root/test/vps_list))
+		IP=${vps_array[1]}
+		ssh_port=${vps_array[2]}
+		user=${vps_array[3]}
+		ssh -p $ssh_port ${user}@${IP}
+	}
+	clear
+	white_font "\n远程服务器一键管理脚本 \c" && red_font "[v${sh_ver}]"
+	white_font "	-- 胖波比 --\n"
+	yello_font '———————远程服务器管理———————'
+	green_font ' 1.' '  连接远程服务器'
+	yello_font '————————————————————————————'
+	green_font ' 2.' '  添加远程服务器'
+	green_font ' 3.' '  删除远程服务器'
+	green_font ' 4.' '  修改远程服务器'
+	yello_font '————————————————————————————'
+	green_font ' 0.' '  回到主页'
+	green_font ' 5.' '  退出脚本'
+	yello_font "————————————————————————————\n"
+	read -p "请输入数字[0-5](默认:1)：" num
+	[ -z "${num}" ] && num=1
+	clear
+	case "$num" in
+		0)
+		start_menu_main
+		;;
+		1)
+		connect_vps
+		;;
+		2)
+		add_vps
+		;;
+		3)
+		delete_vps
+		;;
+		4)
+		modify_vps
 		;;
 		5)
 		exit 1
@@ -5897,10 +6138,10 @@ set_firewall(){
 		clear
 		echo -e "${Error}请输入正确数字 [0-5]"
 		sleep 2s
-		set_firewall
+		remote_vps
 		;;
 	esac
-	set_firewall
+	remote_vps
 }
 
 #管理脚本自启
@@ -5956,12 +6197,13 @@ start_menu_main(){
 	green_font ' 18.' ' 系统性能测试'
 	green_font ' 19.' ' 重装VPS系统'
 	green_font ' 20.' ' 设置防火墙'
+	green_font ' 21.' ' 远程服务器管理'
 	yello_font '—————————————脚本设置—————————————'
-	green_font ' 21.' ' 脚本自启管理'
-	green_font ' 22.' ' 退出脚本'
+	green_font ' 22.' ' 脚本自启管理'
+	green_font ' 23.' ' 退出脚本'
 	yello_font "——————————————————————————————————\n"
-	read -p "请输入数字[1-22](默认:22)：" num
-	[ -z "${num}" ] && num=22
+	read -p "请输入数字[1-23](默认:23)：" num
+	[ -z "${num}" ] && num=23
 	case "$num" in
 		1)
 		manage_v2ray
@@ -6024,14 +6266,17 @@ start_menu_main(){
 		set_firewall
 		;;
 		21)
-		manage_shell
+		remote_vps
 		;;
 		22)
+		manage_shell
+		;;
+		23)
 		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}请输入正确数字 [1-22]"
+		echo -e "${Error}请输入正确数字 [1-23]"
 		sleep 2s
 		start_menu_main
 		;;
@@ -6041,27 +6286,35 @@ start_menu_main(){
 
 check_sys
 test ! -e /root/test/de || start_menu_main
-[[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error}本脚本不支持当前系统 ${release}！" && exit 1
+[[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error}本脚本不支持当前系统！" && exit 1
+#判断是否支持IPV6
+[ ! -z $(wget -qO- -t1 -T2 ipv6.icanhazip.com) ] && echo $(wget -qO- -t1 -T2 ipv6.icanhazip.com) > /root/test/ipv6
 if [[ ${release} == "centos" ]]; then
 	if [[ ${version} -ge "7" ]]; then
 		systemctl start firewalld
 		systemctl enable firewalld
 	else
 		service iptables save
-		service ip6tables save
 		chkconfig --level 2345 iptables on
-		chkconfig --level 2345 ip6tables on
+		if [ -e /root/test/ipv6 ]; then
+			service ip6tables save
+			chkconfig --level 2345 ip6tables on
+		fi
 	fi
 else
+	mkdir -p /etc/network/if-pre-up.d
 	iptables-save > /etc/iptables.up.rules
-	ip6tables-save > /etc/ip6tables.up.rules
-	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules\n/sbin/ip6tables-restore < /etc/ip6tables.up.rules' > /etc/network/if-pre-up.d/iptables
+	echo -e '#!/bin/bash\n/sbin/iptables-restore < /etc/iptables.up.rules' > /etc/network/if-pre-up.d/iptables
+	if [ -e /root/test/ipv6 ]; then
+		ip6tables-save > /etc/ip6tables.up.rules
+		echo -e '/sbin/ip6tables-restore < /etc/ip6tables.up.rules' >> /etc/network/if-pre-up.d/iptables
+	fi
 	chmod +x /etc/network/if-pre-up.d/iptables
 fi
 echo 'export LANG="en_US.UTF-8"' >> /root/.bash_profile
 add_firewall_base
 #是阿里云则卸载云盾
-org=$(curl -s https://ipapi.co/org/)
+org=$(wget -qO- -t1 -T2 https://ipapi.co/org)
 if [[ ${org} =~ "Alibaba" ]]; then
 	wget http://update.aegis.aliyun.com/download/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh
 	wget http://update.aegis.aliyun.com/download/quartz_uninstall.sh && chmod +x quartz_uninstall.sh && ./quartz_uninstall.sh
@@ -6083,6 +6336,7 @@ fi
 firewall_restart
 echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续..."
 char=`get_char`
+${PM} update
 ${PM} -y install jq qrencode sshpass nodejs openssl git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates vim
 if [[ ${release} == "centos" ]]; then
 	yum -y install epel-release python36 openssl-devel
@@ -6096,6 +6350,11 @@ else
 	apt-get -y install python python-pip python-setuptools libssl-dev
 fi
 mkdir -p /root/test && touch /root/test/de
+#添加地区信息
 country=$(curl -s https://ipapi.co/country/)
 sed -i "s#${myinfo}#${country}-${myinfo}#g" sv.sh
+if [[ `pwd` != '/root' ]]; then
+	cp sv.sh /root/sv.sh
+	chmod +x /root/sv.sh
+fi
 exec ./sv.sh
