@@ -55,7 +55,7 @@ check_sys(){
 		PM='apt'
 	fi
 	bit=`uname -m`
-	myinfo="企鹅群:991425421"
+	myinfo="企鹅号:3450633979"
 }
 #获取IP
 get_ip(){
