@@ -4,7 +4,7 @@ export PATH
 stty erase ^H
 
 #版本
-sh_ver="7.4.2"
+sh_ver="7.4.4"
 
 #颜色信息
 green_font(){
@@ -55,7 +55,7 @@ check_sys(){
 		PM='apt'
 	fi
 	bit=`uname -m`
-	myinfo="企鹅号:3450633979"
+	myinfo="企鹅群:991425421"
 }
 #获取IP
 get_ip(){
@@ -219,6 +219,55 @@ check_vpn_status(){
 
 #安装V2ray
 manage_v2ray(){
+	check_pip(){
+		if [[ ! `pip -V|awk -F '(' '{print $2}'` =~ 'python 3' ]]; then
+			pip_array=($(whereis pip|awk -F 'pip: ' '{print $2}'))
+			for node in ${pip_array[@]};
+			do
+				if [[ ! $node =~ [0-9] ]]; then
+					rm -f $node
+				fi
+				if [[ $node =~ '3.' ]]; then
+					pip_path=$node
+				fi
+			done
+			if [[ -n $pip_path ]]; then
+				ln -s $pip_path /usr/local/bin/pip
+				ln -s $pip_path /usr/bin/pip
+				pip install --upgrade pip
+			else
+				unset CMD
+				py_array=(python3.1 python3.2 python3.3 python3.4 python3.5 python3.6 python3.7 python3.8 python3.9)
+				for node in ${py_array[@]};
+				do
+					if type $node >/dev/null 2>&1; then
+						CMD=$node
+					fi
+				done
+				if [[ -n $CMD ]]; then
+					wget -O get-pip.py https://bootstrap.pypa.io/get-pip.py
+					$CMD get-pip.py
+					rm -f get-pip.py
+				else
+					zlib_ver='1.2.11'
+					wget "http://www.zlib.net/zlib-${zlib_ver}.tar.gz"
+					tar -xvzf zlib-${zlib_ver}.tar.gz
+					cd zlib-${zlib_ver}
+					./configure
+					make && make install && cd /root
+					rm -rf zlib*
+					py_ver='3.7.7'
+					wget "https://www.python.org/ftp/python/${py_ver}/Python-${py_ver}.tgz"
+					tar xvf Python-${py_ver}.tgz
+					cd Python-${py_ver}
+					./configure --prefix=/usr/local
+					make && make install && cd /root
+					rm -rf Python*
+				fi
+				check_pip
+			fi
+		fi
+	}
 	v2ray_info(){
 		sed -i 's#ps": ".*"#ps": "'${myinfo}'"#g' $(cat /root/test/v2raypath)
 		clear
@@ -568,13 +617,15 @@ manage_v2ray(){
 		manage_v2ray_user
 	}
 	install_v2ray(){
+		check_pip
 		bash <(curl -sL $v2ray_url) --zh
-		find / -name group.py|grep v2ray_util > /root/test/v2raypath
+		find /usr/local/lib/python*/*-packages/v2ray_util -name group.py > /root/test/v2raypath
 		echo -e "${Info}任意键继续..."
 		char=`get_char`
 		manage_v2ray_user
 	}
 	install_v2ray_repair(){
+		check_pip
 		bash <(curl -sL $v2ray_url) -k
 		echo -e "${Info}已保留配置更新，任意键继续..."
 		char=`get_char`
@@ -1708,11 +1759,13 @@ manage_trojan(){
 			fi
 			read -p "请输入已解析成功的域名：" ydomain
 			if [[ -z $(lsof -i:80) ]]; then
+				port=80 && add_firewall && firewall_restart
 				/root/.acme.sh/acme.sh --issue -d ${ydomain} --standalone
 			elif [[ -z $(lsof -i:443) ]]; then
 				/root/.acme.sh/acme.sh --issue -d ${ydomain} --alpn
 			else
-				command_array=($(lsof -i:80|sed '1d'|awk '{print $1}'))
+				port=80 && add_firewall && firewall_restart
+				command_array=($(lsof -i:80|sed '1d'|awk '{print $1}'|uniq))
 				length=${#command_array[@]}
 				for(( i = 0; i < ${length}; i++ ))
 				do
@@ -1816,6 +1869,7 @@ manage_trojan(){
 		systemctl stop trojan
 		rm -rf /usr/local/trojan 
 		rm -f /root/test/trojan /etc/trojan.json /etc/systemd/system/trojan.service
+		systemctl daemon-reload
 	}
 	add_user_trojan(){
 		clear
@@ -2231,6 +2285,204 @@ manage_trojan(){
 		start_menu_trojan
 	}
 	start_menu_trojan
+}
+
+#安装NaiveProxy
+manage_naive(){
+	install_dir='/opt/naiveproxy'
+	install_naive(){
+		mkdir -p ${install_dir}/caddy/html
+		cd ${install_dir}/caddy/html
+		wget https://raw.githubusercontent.com/AmuyangA/public/master/web.zip
+		unzip web.zip && rm -f web.zip
+
+		cd ..
+		curl -OJ 'https://caddyserver.com/download/linux/amd64?plugins=http.forwardproxy&license=personal'
+		tar xf ./caddy_*.tar.gz && rm -f ./caddy_*.tar.gz
+		setcap cap_net_bind_service=+ep caddy
+		base64 -d <<< eW91cl9kb21haW4NCnJvb3QgeW91cl93ZWJfcm9vdA0KdGxzIHlvdXJfZW1haWwNCmZvcndhcmRwcm94eSB7DQogIGJhc2ljYXV0aCB5b3VyX3VzZXIgeW91cl9wdw0KICBoaWRlX2lwDQogIGhpZGVfdmlhDQogIHByb2JlX3Jlc2lzdGFuY2Ugc2VjcmV0LmxvY2FsaG9zdA0KICB1cHN0cmVhbSBodHRwOi8vMTI3LjAuMC4xOnlvdXJfcG9ydA0KfQ== > Caddyfile
+
+		clear && echo && read -p "请输入你的域名：" your_domain
+		sed -i "s#your_domain#${your_domain}#g" Caddyfile
+		sed -i "s#your_web_root#${install_dir}/caddy/html#g" Caddyfile
+		yello_font '———————————————————————————————'
+		green_font ' 1.' '  邮箱自动申请证书'
+		green_font ' 2.' '  自定义已上传证书路径'
+		yello_font '———————————————————————————————'
+		unset TYPE && read -p "请输入数字[1-2](默认:1)：" TYPE
+		case $TYPE in
+			2)
+			echo -e "${Info}请输入已上传$(green_font ${your_domain})证书和私钥的路径"
+			domain_cert_path="${install_dir}/caddy/domain.crt ${install_dir}/caddy/domain.key"
+			read -p "例如$(green_font '${domain_cert_path}')：" your_email
+			;;
+			*)
+			read -p "请输入用来申请域名证书的可用邮箱(默认:hsxmuyang68@gmail.com)：" your_email
+			[ -z $your_email ] && your_email='hsxmuyang68@gmail.com'
+			;;
+		esac
+		sed -i "s#your_email#${your_email}#g" Caddyfile
+		your_user=$(tr -dc 'A-Za-z' </dev/urandom | head -c8)
+		sed -i "s#your_user#${your_user}#g" Caddyfile
+		your_pw=$(tr -dc 'A-Za-z' </dev/urandom | head -c17)
+		sed -i "s#your_pw#${your_pw}#g" Caddyfile
+		
+		your_port='8080'
+		until [[ -z "$(lsof -i:${your_port})" ]]
+		do
+			your_port=$(shuf -i 8000-9000 -n1)
+		done
+		port=$your_port && add_firewall && echo $your_port > README.txt
+		sed -i "s#your_port#${your_port}#g" Caddyfile
+		hp_pt=80
+		until [[ -z "$(lsof -i:${hp_pt})" ]]
+		do
+			hp_pt=$(shuf -i 85-110 -n1)
+		done
+		port=$hp_pt && add_firewall && echo $hp_pt >> README.txt
+		hps_pt=443
+		until [[ -z "$(lsof -i:${hps_pt})" ]]
+		do
+			hps_pt=$(shuf -i 450-500 -n1)
+		done
+		port=$hps_pt && add_firewall && echo $hps_pt >> README.txt
+		firewall_restart
+		
+		if [[ $TYPE == '2' ]]; then
+			echo 2 >> README.txt
+			nohup ./caddy -host $your_domain -port $hps_pt |tee &
+		else
+			echo 1 >> README.txt
+			if [[ $hp_pt != '80' ]]; then
+				port=80 && add_firewall
+				cmd_80=($(lsof -i:80|sed '1d'|awk '{print $1}'|uniq))
+				length_80=${#cmd_80[@]}
+				for(( i = 0; i < ${length_80}; i++ ))
+				do
+					service ${cmd_80[$i]} stop
+				done
+			fi
+			if [[ $hps_pt != '443' ]]; then
+				port=443 && add_firewall
+				cmd_443=($(lsof -i:443|sed '1d'|awk '{print $1}'|uniq))
+				length_443=${#cmd_443[@]}
+				for(( i = 0; i < ${length_443}; i++ ))
+				do
+					service ${cmd_443[$i]} stop
+				done
+			fi
+			firewall_restart
+			clear && echo -e "${Tip}请耐心等待程序完成执行..."
+			echo -e "${Tip}出现$(red_font 'Serving HTTP on port 80')之后，$(red_font 'Ctrl+C')进行下一步..."
+			./caddy -agree -host $your_domain -email $your_email
+			nohup ./caddy -agree -host $your_domain -http-port $hp_pt -https-port $hps_pt -email $your_email |tee &
+			if [[ -n ${cmd_80[@]} ]]; then
+				for(( i = 0; i < ${length_80}; i++ ))
+				do
+					service ${cmd_80[$i]} restart
+				done
+			fi
+			if [[ -n ${cmd_443[@]} ]]; then
+				for(( i = 0; i < ${length_443}; i++ ))
+				do
+					service ${cmd_443[$i]} restart
+				done
+			fi
+		fi
+
+		cd ..
+		naive_ver='80.0.3987.87-3'
+		DOWNLOADURL="https://github.com/klzgrad/naiveproxy/releases/download/v${naive_ver}/naiveproxy-v${naive_ver}-linux-x64.tar.xz"
+		wget --no-check-certificate "${DOWNLOADURL}" && tar xf "naiveproxy-v${naive_ver}-linux-x64.tar.xz"
+		mv "naiveproxy-v${naive_ver}-linux-x64" naive && rm -f naiveproxy-*tar.xz
+		cd naive
+		base64 -d <<< ew0KICAibGlzdGVuIjogImh0dHA6Ly8xMjcuMC4wLjE6eW91cl9wb3J0IiwNCiAgInBhZGRpbmciOiB0cnVlDQp9 > config.json
+		sed -i "s#your_port#${your_port}#g" config.json
+		nohup ./naive |tee &
+
+		cd ${install_dir}/caddy/html
+		base64 -d <<< ew0KICAibGlzdGVuIjogInNvY2tzOi8vMTI3LjAuMC4xOjEwODAiLA0KICAicHJveHkiOiAiaHR0cHM6Ly95b3VyX3VzZXI6eW91cl9wd0B5b3VyX2RvbWFpbiIsDQogICJwYWRkaW5nIjogdHJ1ZQ0KfQ== > config.json
+		sed -i "s#your_user#${your_user}#g" config.json
+		sed -i "s#your_pw#${your_pw}#g" config.json
+		sed -i "s#your_domain#${your_domain}:${hps_pt}#g" config.json
+		cd /root
+		clear && echo -e "\n${Info}配置信息：$(red_font https://${your_user}:${your_pw}@${your_domain}:${hps_pt})"
+		echo -e "${Info}客户端配置文件下载地址：$(green_font https://${your_domain}:${hps_pt}/config.json)"
+		echo -e "\n${Info}任意键返回主页..."
+		char=`get_char`
+		start_menu_main
+	}
+	uninstall_naive(){
+		port=$(cat ${install_dir}/caddy/README.txt|sed -n '1p')
+		kill -9 $(lsof -i:${port}|grep naive|awk -F ' ' '{print $2}')
+		delete_firewall
+		port=$(cat ${install_dir}/caddy/README.txt|sed -n '3p')
+		kill -9 $(lsof -i:${port}|grep caddy|awk -F ' ' '{print $2}')
+		delete_firewall
+		port=$(cat ${install_dir}/caddy/README.txt|sed -n '2p')
+		delete_firewall && firewall_restart
+		rm -rf $install_dir
+	}
+	stop_naive(){
+		Caddy_port=$(cat ${install_dir}/caddy/README.txt|sed -n '3p')
+		Navie_port=$(cat ${install_dir}/caddy/README.txt|sed -n '1p')
+		if [[ -n $(lsof -i:${Caddy_port}) ]]; then
+			kill -9 $(lsof -i:${Caddy_port}|grep caddy|awk -F ' ' '{print $2}')
+		fi
+		if [[ -n $(lsof -i:${Navie_port}) ]]; then
+			kill -9 $(lsof -i:${Navie_port}|grep naive|awk -F ' ' '{print $2}')
+		fi
+	}
+	start_naive(){
+		cd ${install_dir}/caddy
+		Caddy_port=$(cat README.txt|sed -n '3p')
+		if [[ -z $(lsof -i:${Caddy_port}) ]]; then
+			if [[ $(cat README.txt|sed -n '4p') == '2' ]]; then
+				nohup ./caddy -host $(cat Caddyfile|sed -n '1p') -port $Caddy_port |tee &
+			else
+				nohup ./caddy -agree -host $(cat Caddyfile|sed -n '1p') -http-port $(cat README.txt|sed -n '2p') -https-port $Caddy_port -email $(cat Caddyfile|grep tls|awk '{print $2}') |tee &
+			fi
+		fi
+		Navie_port=$(cat README.txt|sed -n '1p')
+		if [[ -z $(lsof -i:${Navie_port}) ]]; then
+			cd .. && cd naive
+			nohup ./naive |tee &
+		fi
+		cd /root
+	}
+
+	clear
+	if [[ -e "${install_dir}/caddy/README.txt" ]]; then
+		yello_font "\n—————————————————————————"
+		green_font ' 1.' '  卸载NaiveProxy'
+		green_font ' 2.' '  重装NaiveProxy'
+		green_font ' 3.' '  停止NaiveProxy'
+		green_font ' 4.' '  启动NaiveProxy'
+		green_font ' 5.' '  退出'
+		yello_font '—————————————————————————'
+		read -p "请输入数字[1-5](默认:1)：" num
+		[ -z $num ] && num=1
+		case $num in
+			1)
+			uninstall_naive
+			;;
+			2)
+			uninstall_naive
+			install_naive
+			;;
+			3)
+			stop_naive
+			;;
+			4)
+			start_naive
+			;;
+			*)
+			exit 0
+			;;
+		esac
+	else
+		install_naive
+	fi
 }
 
 #安装BBR或锐速
@@ -3253,7 +3505,7 @@ manage_btpanel(){
 		char=`get_char`
 	}
 	install_btpanel(){
-		wget -O bt_install.sh https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/bt_install%20.sh && chmod +x bt_install.sh && ./bt_install.sh
+		wget -O bt_install.sh https://raw.githubusercontent.com/AmuyangA/public/master/panel/btpanel/bt_install.sh && chmod +x bt_install.sh && ./bt_install.sh
 		start_menu_main
 	}
 	start_menu_btpanel(){
@@ -4315,8 +4567,8 @@ EOF
 		fi
 	}
 	nginx_uninstall(){
-		if [[ ${release} == "centos" ]]; then
-			yum --purge remove nginx
+		if [[ ${release} == 'centos' ]]; then
+			yum remove nginx
 		else
 			apt-get --purge remove nginx
 		fi
@@ -6176,35 +6428,36 @@ start_menu_main(){
 	green_font ' 1.' '  V2Ray安装管理'
 	green_font ' 2.' '  SSR安装管理'
 	green_font ' 3.' '  Trojan安装管理'
+	green_font ' 4.' '  Naive安装管理'
 	yello_font '—————————————节点相关—————————————'
-	green_font ' 4.' '  BBR/Lotserver安装管理'
-	green_font ' 5.' '  生成订阅链接'
-	green_font ' 6.' '  生成链接二维码'
+	green_font ' 5.' '  BBR/Lotserver安装管理'
+	green_font ' 6.' '  生成订阅链接'
+	green_font ' 7.' '  生成链接二维码'
 	yello_font '—————————————控制面板—————————————'
-	green_font ' 7.' '  宝塔面板安装管理'
-	green_font ' 8.' '  临时邮箱安装管理'
-	green_font ' 9.' '  ZFAKA安装管理'
-	green_font ' 10.' ' SS-Panel安装管理'
-	green_font ' 11.' ' Kodexplorer安装管理'
-	green_font ' 12.' ' WordPress安装管理'
-	green_font ' 13.' ' Docker安装管理'
+	green_font ' 8.' '  宝塔面板安装管理'
+	green_font ' 9.' '  临时邮箱安装管理'
+	green_font ' 10.' ' ZFAKA安装管理'
+	green_font ' 11.' ' SS-Panel安装管理'
+	green_font ' 12.' ' Kodexplorer安装管理'
+	green_font ' 13.' ' WordPress安装管理'
+	green_font ' 14.' ' Docker安装管理'
 	yello_font '———————————设置伪装(二选一)———————'
-	green_font ' 14.' ' Caddy安装管理'
-	green_font ' 15.' ' Nginx安装管理'
+	green_font ' 15.' ' Caddy安装管理'
+	green_font ' 16.' ' Nginx安装管理'
 	yello_font '—————————————系统设置—————————————'
-	green_font ' 16.' ' 设置SSH端口'
-	green_font ' 17.' ' 设置root密码'
-	green_font ' 18.' ' 系统性能测试'
-	green_font ' 19.' ' 重装VPS系统'
-	green_font ' 20.' ' 设置防火墙'
-	green_font ' 21.' ' 远程服务器管理'
+	green_font ' 17.' ' 设置SSH端口'
+	green_font ' 18.' ' 设置root密码'
+	green_font ' 19.' ' 系统性能测试'
+	green_font ' 20.' ' 重装VPS系统'
+	green_font ' 21.' ' 设置防火墙'
+	green_font ' 22.' ' 远程服务器管理'
 	yello_font '—————————————脚本设置—————————————'
-	green_font ' 22.' ' 脚本自启管理'
-	green_font ' 23.' ' 退出脚本'
+	green_font ' 23.' ' 脚本自启管理'
+	green_font ' 24.' ' 退出脚本'
 	yello_font "——————————————————————————————————\n"
-	read -p "请输入数字[1-23](默认:23)：" num
-	[ -z "${num}" ] && num=23
-	case "$num" in
+	read -p "请输入数字[1-24](默认:1)：" num
+	[ -z $num ] && num=1
+	case $num in
 		1)
 		manage_v2ray
 		;;
@@ -6215,68 +6468,71 @@ start_menu_main(){
 		manage_trojan
 		;;
 		4)
-		install_bbr
+		manage_naive
 		;;
 		5)
-		manage_dingyue
+		install_bbr
 		;;
 		6)
-		manage_qrcode
+		manage_dingyue
 		;;
 		7)
-		manage_btpanel
+		manage_qrcode
 		;;
 		8)
-		manage_forsakenmail
+		manage_btpanel
 		;;
 		9)
-		manage_zfaka
+		manage_forsakenmail
 		;;
 		10)
-		manage_sspanel
+		manage_zfaka
 		;;
 		11)
-		manage_kodexplorer
+		manage_sspanel
 		;;
 		12)
-		manage_wordpress
+		manage_kodexplorer
 		;;
 		13)
-		manage_docker
+		manage_wordpress
 		;;
 		14)
-		install_caddy
+		manage_docker
 		;;
 		15)
-		install_nginx
+		install_caddy
 		;;
 		16)
-		set_ssh
+		install_nginx
 		;;
 		17)
-		set_root
+		set_ssh
 		;;
 		18)
-		test_sys
+		set_root
 		;;
 		19)
-		reinstall_sys
+		test_sys
 		;;
 		20)
-		set_firewall
+		reinstall_sys
 		;;
 		21)
-		remote_vps
+		set_firewall
 		;;
 		22)
-		manage_shell
+		remote_vps
 		;;
 		23)
+		manage_shell
+		;;
+		24)
 		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}请输入正确数字 [1-23]"
+		echo -e "${Error}请输入正确数字 [1-24]"
 		sleep 2s
 		start_menu_main
 		;;
@@ -6289,8 +6545,8 @@ test ! -e /root/test/de || start_menu_main
 [[ ${release} != "debian" ]] && [[ ${release} != "ubuntu" ]] && [[ ${release} != "centos" ]] && echo -e "${Error}本脚本不支持当前系统！" && exit 1
 #判断是否支持IPV6
 [ ! -z $(wget -qO- -t1 -T2 ipv6.icanhazip.com) ] && echo $(wget -qO- -t1 -T2 ipv6.icanhazip.com) > /root/test/ipv6
-if [[ ${release} == "centos" ]]; then
-	if [[ ${version} -ge "7" ]]; then
+if [[ ${release} == 'centos' ]]; then
+	if [[ ${version} -ge '7' ]]; then
 		systemctl start firewalld
 		systemctl enable firewalld
 	else
@@ -6315,7 +6571,7 @@ echo 'export LANG="en_US.UTF-8"' >> /root/.bash_profile
 add_firewall_base
 #是阿里云则卸载云盾
 org=$(wget -qO- -t1 -T2 https://ipapi.co/org)
-if [[ ${org} =~ "Alibaba" ]]; then
+if [[ ${org} =~ 'Alibaba' ]]; then
 	wget http://update.aegis.aliyun.com/download/uninstall.sh && chmod +x uninstall.sh && ./uninstall.sh
 	wget http://update.aegis.aliyun.com/download/quartz_uninstall.sh && chmod +x quartz_uninstall.sh && ./quartz_uninstall.sh
 	pkill aliyun-service
@@ -6338,16 +6594,16 @@ echo -e "${Info}首次运行此脚本会安装依赖环境,按任意键继续...
 char=`get_char`
 ${PM} update
 ${PM} -y install jq qrencode sshpass nodejs openssl git bash curl wget zip unzip gcc automake autoconf make libtool ca-certificates vim
-if [[ ${release} == "centos" ]]; then
-	yum -y install epel-release python36 openssl-devel
+if [[ ${release} == 'centos' ]]; then
+	yum -y install libnss3.so epel-release python36 openssl-devel
 	if [[ ${version} == '8' ]]; then
 		yum -y install python-pip
 	else
 		yum -y install python3-pip
 	fi
 else
-	apt-get --fix-broken install
-	apt-get -y install python python-pip python-setuptools libssl-dev
+	apt --fix-broken install
+	apt -y install libnss3 python python-pip python-setuptools libssl-dev
 fi
 mkdir -p /root/test && touch /root/test/de
 #添加地区信息
