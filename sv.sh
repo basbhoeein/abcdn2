@@ -4,7 +4,7 @@ export PATH
 stty erase ^H
 
 #版本
-sh_ver="7.4.4"
+sh_ver="7.4.5"
 
 #颜色信息
 green_font(){
@@ -2159,6 +2159,7 @@ manage_trojan(){
 		port=$(cat /root/test/trojan|sed -n '1p')
 		pw_trojan=$(jq '.password' /etc/trojan.json)
 		length=$(jq '.password | length' /etc/trojan.json)
+		#tr_info=$(echo ${myinfo} |tr -d '\n' |od -An -tx1|tr ' ' %)
 		tr_info="$(curl -s https://ipapi.co/country/)-%E6%88%91%E4%BB%AC%E7%88%B1%E4%B8%AD%E5%9B%BD"
 		cat /root/certificate/config.json | jq 'del(.password[])' > /root/test/temp.json
 		cp /root/test/temp.json /root/certificate/config.json
@@ -2313,8 +2314,7 @@ manage_naive(){
 		case $TYPE in
 			2)
 			echo -e "${Info}请输入已上传$(green_font ${your_domain})证书和私钥的路径"
-			domain_cert_path="${install_dir}/caddy/domain.crt ${install_dir}/caddy/domain.key"
-			read -p "例如$(green_font '${domain_cert_path}')：" your_email
+			read -p "例如 $(green_font ${install_dir}/caddy/domain.crt) $(green_font ${install_dir}/caddy/domain.key)：" your_email
 			;;
 			*)
 			read -p "请输入用来申请域名证书的可用邮箱(默认:hsxmuyang68@gmail.com)：" your_email
@@ -2747,7 +2747,7 @@ install_bbr(){
 			bash <(wget --no-check-certificate -qO- https://github.com/MoeClub/lotServer/raw/master/Install.sh) uninstall
 		fi
 		clear
-		echo -e "${Info}:清除加速完成。"
+		echo -e "${Info}清除加速完成。"
 		sleep 1s
 	}
 
@@ -6417,6 +6417,27 @@ manage_shell(){
 	fi
 }
 
+#更新脚本
+update_sv(){
+	clear
+	github="https://api.github.com/repos/AmuyangA/internet/contents/supervpn/sv.sh"
+	echo -e "\n${Info}当前版本为 [ ${sh_ver} ]，开始检测最新版本..."
+	sh_new_ver=$(curl -s -H 'Authorization: token 8820eb57d45bd3e5da1f99af3b7c7b0da9f06509' -H 'Accept: application/vnd.github.v3.raw' "${github}"|grep 'sh_ver="'|awk -F "=" '{print $NF}'|sed 's/\"//g'|head -1)
+	[[ -z ${sh_new_ver} ]] && echo -e "${Error}检测最新版本失败！"
+	if [[ ${sh_new_ver} != ${sh_ver} ]]; then
+		echo -e "${Info}发现新版本 [ ${sh_new_ver} ]"
+		echo -e "${Info}正在更新..."
+		curl -H 'Authorization: token 8820eb57d45bd3e5da1f99af3b7c7b0da9f06509' -H 'Accept: application/vnd.github.v3.raw' -O -L "${github}"
+		chmod +x sv.sh
+		myinfo_new=$(grep 'myinfo="' sv.sh |awk -F "=" '{print $NF}'|sed 's/\"//g'|head -1)
+		sed -i "s#${myinfo_new}#${myinfo}#g" sv.sh
+		exec ./sv.sh
+	else
+		echo -e "${Info}当前已是最新版本[ ${sh_new_ver} ] !"
+	fi
+	sleep 2s
+}
+
 #开始菜单
 start_menu_main(){
 	clear
@@ -6453,9 +6474,10 @@ start_menu_main(){
 	green_font ' 22.' ' 远程服务器管理'
 	yello_font '—————————————脚本设置—————————————'
 	green_font ' 23.' ' 脚本自启管理'
-	green_font ' 24.' ' 退出脚本'
+	green_font ' 24.' ' 更新脚本'
+	green_font ' 25.' ' 退出脚本'
 	yello_font "——————————————————————————————————\n"
-	read -p "请输入数字[1-24](默认:1)：" num
+	read -p "请输入数字[1-25](默认:1)：" num
 	[ -z $num ] && num=1
 	case $num in
 		1)
@@ -6528,11 +6550,14 @@ start_menu_main(){
 		manage_shell
 		;;
 		24)
+		update_sv
+		;;
+		25)
 		exit 1
 		;;
 		*)
 		clear
-		echo -e "${Error}请输入正确数字 [1-24]"
+		echo -e "${Error}请输入正确数字 [1-25]"
 		sleep 2s
 		start_menu_main
 		;;
@@ -6602,8 +6627,8 @@ if [[ ${release} == 'centos' ]]; then
 		yum -y install python3-pip
 	fi
 else
-	apt --fix-broken install
-	apt -y install libnss3 python python-pip python-setuptools libssl-dev
+	apt-get --fix-broken install
+	apt-get -y install libnss3 python python-pip python-setuptools libssl-dev
 fi
 mkdir -p /root/test && touch /root/test/de
 #添加地区信息
